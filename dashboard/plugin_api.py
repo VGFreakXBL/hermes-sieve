@@ -79,3 +79,74 @@ async def doctor_lite():
 async def cmd(body: dict):
     args = str((body or {}).get("args", ""))
     return {"result": _plugin._cmd(args)}
+
+
+@router.get("/matrix")
+async def matrix_grid():
+    """Effective tier for every event class x context (rules applied)."""
+    conn = queue.db()
+    classes = sorted({c for (c, _m, _t, _l) in _plugin.matrix.DEFAULT_RULES} |
+                     {c for (c, _x, _t, _e) in queue.context_rules(conn)})
+    grid = {}
+    for cls in classes:
+        rules = queue.rules_for(conn, cls)
+        grid[cls] = {ctx_name: _plugin.matrix.decide(cls, {"context": ctx_name}, rules).tier
+                     for (ctx_name, _desc) in _plugin.matrix.CONTEXTS}
+    return {"contexts": _plugin.matrix.CONTEXTS, "classes": classes, "grid": grid}
+
+
+@router.post("/matrix/cell")
+async def matrix_cell(body: dict):
+    conn = queue.db()
+    cls = str(body.get("event_class", ""))
+    ctx_name = str(body.get("context", "base"))
+    tier = int(body.get("tier", 2))
+    if ctx_name == "base":
+        queue.add_rule(conn, cls, {}, tier, label=f"{cls} (base)")
+    else:
+        queue.set_context_rule(conn, cls, ctx_name, tier)
+    return {"ok": True}
+
+
+@router.get("/stats")
+async def stats():
+    conn = queue.db()
+    return {
+        "rules": [{"rule_id": r, "total": t, "delivered": d, "held": h}
+                  for (r, t, d, h) in queue.rule_stats(conn)],
+        "held": queue.held_count(conn),
+    }
+
+
+@router.post("/simulate")
+async def simulate(body: dict):
+    from datetime import datetime
+    conn = queue.db()
+    cls = str(body.get("event_class", ""))
+    payload = {"context": str(body.get("context", "base"))}
+    if body.get("text"):
+        payload["text"] = str(body["text"])
+    d = _plugin.matrix.decide(cls, payload, queue.rules_for(conn, cls))
+    held, why = _plugin.scheduler.is_held(
+        d.tier, queue.windows(conn), queue.active_mutes(conn, queue.now_iso()),
+        queue.kv_get(conn, "paused_until"), datetime.now())
+    if d.tier == 0 and not held:
+        held, why = True, "tier T0 -> digest by design"
+    action = "hold" if held else ("escalate" if d.tier >= 4 else "deliver")
+    return {"tier": d.tier, "action": action, "rule": d.label, "reason": why}
+
+
+@router.get("/config")
+async def get_config():
+    conn = queue.db()
+    return {k: queue.kv_get(conn, k) or ""
+            for k in ("budget_per_hour", "promo_minutes", "active_context", "target")}
+
+
+@router.post("/config")
+async def set_config(body: dict):
+    conn = queue.db()
+    for k in ("budget_per_hour", "promo_minutes", "active_context", "target"):
+        if k in body:
+            queue.kv_set(conn, k, body[k])
+    return {"ok": True}

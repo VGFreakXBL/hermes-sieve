@@ -153,3 +153,53 @@ def kv_set(conn, k, v) -> None:
     conn.execute("INSERT INTO kv(k, v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
                  (k, str(v)))
     conn.commit()
+
+
+# --- stats + aging holds ----------------------------------------------------
+
+def rule_stats(conn):
+    """Per-rule firing counts from the event log: (rule_id, total, delivered, held)."""
+    return conn.execute(
+        "SELECT rule_id, COUNT(*), COALESCE(SUM(action='delivered'),0), COALESCE(SUM(action='held'),0)"
+        " FROM events WHERE rule_id IS NOT NULL GROUP BY rule_id").fetchall()
+
+
+def stale_holds(conn, cutoff_iso, min_tier=1):
+    """Held, unreleased, un-promoted items older than cutoff (for the promotion ladder)."""
+    return conn.execute(
+        "SELECT h.id, e.id, e.tier, e.event_class FROM holds h JOIN events e ON e.id = h.event_id"
+        " WHERE h.released = 0 AND h.hold_until IS NULL AND e.tier >= ? AND e.ts < ?",
+        (min_tier, cutoff_iso)).fetchall()
+
+
+def recent_deliveries(conn, since_iso, min_tier=2):
+    return conn.execute(
+        "SELECT COUNT(*) FROM events WHERE action = 'delivered' AND tier >= ? AND ts > ?",
+        (min_tier, since_iso)).fetchone()[0]
+
+
+def release_one(conn, hold_id):
+    conn.execute("UPDATE holds SET released = 1 WHERE id = ?", (hold_id,))
+    conn.commit()
+
+
+def set_context_rule(conn, event_class, context, tier):
+    """Grid cell write: the tier for one event class in one context."""
+    conn.execute("DELETE FROM rules WHERE event_class = ? AND match_json = ?",
+                 (event_class, json.dumps({"context": context})))
+    return add_rule(conn, event_class, {"context": context}, tier,
+                    label=f"{event_class} in {context}", source="user")
+
+
+def context_rules(conn):
+    rows = conn.execute(
+        "SELECT event_class, match_json, tier, enabled FROM rules WHERE match_json LIKE '%context%'").fetchall()
+    out = []
+    for (cls, match_json, tier, enabled) in rows:
+        try:
+            ctx_name = json.loads(match_json).get("context")
+        except Exception:
+            ctx_name = None
+        if ctx_name:
+            out.append((cls, ctx_name, tier, bool(enabled)))
+    return out

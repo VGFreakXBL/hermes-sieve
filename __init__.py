@@ -51,12 +51,36 @@ def _make_spiker(event):
 
 # --- core routing ----------------------------------------------------------
 
+def _promote_sweep(conn) -> int:
+    """Promotion ladder: held items older than promo_minutes escalate one tier."""
+    promo = int(queue.kv_get(conn, "promo_minutes") or 0)
+    if not promo:
+        return 0
+    cutoff = (datetime.now() - timedelta(minutes=promo)).isoformat(timespec="seconds")
+    rows = queue.stale_holds(conn, cutoff)
+    n = 0
+    for (hold_id, eid, tier, event_class) in rows:
+        queue.release_one(conn, hold_id)
+        new_tier = min(tier + 1, 5)
+        decision = matrix.Decision(tier=new_tier, rule_id=f"promoted:{eid}",
+                                   label=f"promotion ladder: held {promo}m, escalated T{tier}->T{new_tier}",
+                                   source="user")
+        queue.log_event(conn, event_class, {"promoted_from": eid}, new_tier, "delivered",
+                        decision.rule_id, detail=decision.label)
+        _deliver(conn, eid, event_class, {}, decision, detail=f"was held since {cutoff}")
+        n += 1
+    return n
+
+
 def _route(event_class: str, payload: dict, detail: str = "") -> dict:
     try:
         conn = queue.db()
     except Exception:
         return {"error": "store unavailable"}
     try:
+        _promote_sweep(conn)
+        payload = dict(payload)
+        payload.setdefault("context", queue.kv_get(conn, "active_context") or "base")
         decision = matrix.decide(event_class, payload, queue.rules_for(conn, event_class))
         now = datetime.now()
         paused_until = queue.kv_get(conn, "paused_until")
@@ -65,6 +89,13 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
             queue.active_mutes(conn, queue.now_iso()), paused_until, now)
         if decision.tier == 0 and not held:
             held, reason = True, "tier T0 -> digest by design"
+
+        # attention budget: cap interrupts per rolling hour; overflow auto-holds
+        budget = int(queue.kv_get(conn, "budget_per_hour") or 0)
+        if not held and budget and decision.tier >= 2:
+            since = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+            if queue.recent_deliveries(conn, since) >= budget:
+                held, reason = True, f"attention budget ({budget}/h) reached"
 
         eid = queue.log_event(
             conn, event_class, payload, decision.tier,
@@ -248,7 +279,43 @@ def _cmd_inner(conn, sub, rest) -> str:
         queue.kv_set(conn, "target", rest[0])
         return f"delivery target set: {rest[0]}"
 
-    return "commands: status | why | flush | mute | quiet | pause | rules | doctor | test | target"
+    if sub == "context":
+        if not rest:
+            names = ", ".join(c for c, _d in matrix.CONTEXTS)
+            return f"active context: {queue.kv_get(conn, 'active_context') or 'base'} ({names})"
+        queue.kv_set(conn, "active_context", rest[0])
+        return f"active context set: {rest[0]}"
+
+    if sub == "simulate":
+        # /sieve simulate <event_class> [context] [keyword]  (dry-run, no side effects)
+        if not rest:
+            return "usage: /sieve simulate <event_class> [context] [keyword]"
+        payload = {"context": rest[1] if len(rest) > 1 else (queue.kv_get(conn, "active_context") or "base")}
+        if len(rest) > 2:
+            payload["text"] = " ".join(rest[2:])
+        d = matrix.decide(rest[0], payload, queue.rules_for(conn, rest[0]))
+        held, why = scheduler.is_held(d.tier, queue.windows(conn),
+                                      queue.active_mutes(conn, queue.now_iso()),
+                                      queue.kv_get(conn, "paused_until"), datetime.now())
+        if d.tier == 0 and not held:
+            held, why = True, "tier T0 -> digest by design"
+        action = "HOLD to digest" if held else ("ESCALATE (alarm)" if d.tier >= 4 else "deliver now")
+        line = f"simulate {rest[0]} [{payload['context']}]: T{d.tier} -> {action} | {d.label}"
+        return line + (f" | {why}" if why else "")
+
+    if sub == "budget":
+        if not rest:
+            return f"attention budget: {queue.kv_get(conn, 'budget_per_hour') or 'off'} interrupts/hour (0=off)"
+        queue.kv_set(conn, "budget_per_hour", rest[0])
+        return f"attention budget set: {rest[0]}/hour"
+
+    if sub == "promote":
+        if not rest:
+            return f"promotion ladder: {queue.kv_get(conn, 'promo_minutes') or 'off'} min (0=off)"
+        queue.kv_set(conn, "promo_minutes", rest[0])
+        return f"promotion ladder set: held items escalate after {rest[0]} min"
+
+    return "commands: status | why | flush | mute | quiet | pause | rules | context | simulate | budget | promote | doctor | test | target"
 
 
 # --- registration -----------------------------------------------------------

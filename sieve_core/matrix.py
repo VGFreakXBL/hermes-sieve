@@ -15,6 +15,21 @@ TIERS = {
     5: "siren (through Silent+Focus)",
 }
 
+# Policy contexts: the matrix is event class x context -> tier. A context rule
+# (match {"context": "<name>"}) overrides the base rule for that class when the
+# named context is active. Detection sources vary (clock, calendar, location,
+# screen-share, Health, Home Assistant, manual); "base" is always the fallback.
+CONTEXTS = [
+    ("base", "always"),
+    ("after_hours", "quiet window hours"),
+    ("meeting", "calendar shows busy"),
+    ("commuting", "location is moving"),
+    ("vacation", "all-day PTO event"),
+    ("streaming", "fullscreen or screen-share"),
+    ("sleeping", "Health sleep or manual"),
+    ("deep_work", "manual focus session"),
+]
+
 # Seeded defaults (the "matrix starter pack"). User rules override these.
 DEFAULT_RULES = [
     ("needs_human", {}, 4, "needs-human gate -> pleasant alarm (default)"),
