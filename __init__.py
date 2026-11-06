@@ -97,6 +97,18 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
             if queue.recent_deliveries(conn, since) >= budget:
                 held, reason = True, f"attention budget ({budget}/h) reached"
 
+        # repeat limit (olympus pattern): the same class re-alerts at most once
+        # per repeat_limit_hours. Applies to T2 only: gates and alarms (T3+)
+        # must always reach the human because they block work or breach quiet.
+        limit_h = float(queue.kv_get(conn, "repeat_limit_hours") or 6)
+        if not held and limit_h and decision.tier == 2:
+            since = (now - timedelta(hours=limit_h)).isoformat(timespec="seconds")
+            row = conn.execute(
+                "SELECT COUNT(*) FROM events WHERE event_class = ? AND action = 'delivered'"
+                " AND tier = 2 AND ts > ?", (event_class, since)).fetchone()
+            if row and row[0] > 0:
+                held, reason = True, f"repeat limit ({limit_h}h) for {event_class}"
+
         eid = queue.log_event(
             conn, event_class, payload, decision.tier,
             "held" if held else "delivered", decision.rule_id,
