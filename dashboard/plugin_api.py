@@ -120,20 +120,60 @@ async def stats():
 
 @router.post("/simulate")
 async def simulate(body: dict):
+    return _simulate(str(body.get("event_class", "")), str(body.get("context", "base")), body.get("text"))
+
+
+@router.get("/simulate")
+async def simulate_get(event_class: str = "", context: str = "base"):
+    """GET so the pane can preview without a POST body (some hosts drop bodies)."""
+    return _simulate(event_class, context, None)
+
+
+def _simulate(event_class: str, context: str, text):
     from datetime import datetime
     conn = queue.db()
-    cls = str(body.get("event_class", ""))
-    payload = {"context": str(body.get("context", "base"))}
-    if body.get("text"):
-        payload["text"] = str(body["text"])
-    d = _plugin.matrix.decide(cls, payload, queue.rules_for(conn, cls))
+    payload = {"context": context or "base"}
+    if text:
+        payload["text"] = str(text)
+    d = _plugin.matrix.decide(event_class, payload, queue.rules_for(conn, event_class))
     held, why = _plugin.scheduler.is_held(
         d.tier, queue.windows(conn), queue.active_mutes(conn, queue.now_iso()),
         queue.kv_get(conn, "paused_until"), datetime.now())
     if d.tier == 0 and not held:
         held, why = True, "tier T0 -> digest by design"
     action = "hold" if held else ("escalate" if d.tier >= 4 else "deliver")
-    return {"tier": d.tier, "action": action, "rule": d.label, "reason": why}
+    return {
+        "event_class": event_class,
+        "context": payload["context"],
+        "tier": d.tier,
+        "action": action,
+        "rule": d.label,
+        "reason": why,
+        "rings_phone": action == "escalate",
+        "note": "Preview only. Nothing was queued and the phone did not ring.",
+    }
+
+
+@router.post("/quiet")
+async def add_quiet(body: dict):
+    conn = queue.db()
+    start = str(body.get("start", "23:00"))
+    end = str(body.get("end", "08:00"))
+    days = str(body.get("days", "0123456"))
+    floor = int(body.get("floor", 4))
+    label = str(body.get("label", "silent hours"))
+    wid = queue.add_window(conn, start, end, days, floor, label)
+    return {"ok": True, "id": wid}
+
+
+@router.post("/quiet/remove")
+async def remove_quiet(body: dict):
+    conn = queue.db()
+    if body.get("all"):
+        queue.clear_windows(conn)
+    elif body.get("id") is not None:
+        queue.delete_window(conn, body["id"])
+    return {"ok": True}
 
 
 @router.get("/config")

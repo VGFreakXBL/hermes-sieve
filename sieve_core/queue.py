@@ -133,6 +133,11 @@ def clear_windows(conn) -> None:
     conn.commit()
 
 
+def delete_window(conn, window_id) -> None:
+    conn.execute("DELETE FROM quiet_windows WHERE id = ?", (int(window_id),))
+    conn.commit()
+
+
 def add_mute(conn, tier, until_ts) -> int:
     cur = conn.execute("INSERT INTO mutes(tier, until_ts) VALUES(?,?)", (tier, until_ts))
     conn.commit()
