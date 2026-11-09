@@ -38,11 +38,13 @@ def test_floor_none_holds_alarms_too():
     assert scheduler.is_held(0, windows, [], None, WED_2330)[0] is True
 
 
-def test_mute_holds_exact_tier_only():
+def test_mute_is_a_ceiling_not_a_point():
+    """'mute T3' means T3 and below: nobody mutes each lower tier separately."""
     mutes = [(1, 4, "2099-01-01T00:00:00")]
     assert scheduler.is_held(4, [], mutes, None, WED_1200)[0] is True
-    assert scheduler.is_held(5, [], mutes, None, WED_1200)[0] is False
-    assert scheduler.is_held(3, [], mutes, None, WED_1200)[0] is False
+    assert scheduler.is_held(5, [], mutes, None, WED_1200)[0] is False, "never covers a tier above the ceiling"
+    assert scheduler.is_held(3, [], mutes, None, WED_1200)[0] is True, "T3 is below a T4 ceiling"
+    assert scheduler.is_held(0, [], mutes, None, WED_1200)[0] is True
 
 
 def test_pause_holds_everything():

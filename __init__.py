@@ -327,7 +327,9 @@ def _cmd_inner(conn, sub, rest) -> str:
         until_spec = " ".join(rest[2:]) if rest[1].lower() == "until" else " ".join(rest[1:])
         until = scheduler.parse_until(until_spec)
         queue.add_mute(conn, tier, until.isoformat(timespec="seconds"))
-        return f"muted T{tier} until {until:%H:%M}"
+        band = f"T0-T{tier}" if tier else "T0"
+        alarm_note = "" if tier >= 4 else " (alarms T4+ still reach you)"
+        return f"muted {band} until {until:%H:%M}{alarm_note}"
 
     if sub == "quiet":
         # /sieve quiet 23:00-08:00 [floor=T4] [weekdays]

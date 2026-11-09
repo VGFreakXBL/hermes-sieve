@@ -108,6 +108,12 @@ weaker class of interrupt than the mobile arm. SIEVE labels the tier it actually
 achieved, never the tier you hoped for. When the phone arm is live, T5 is a
 siren; when it is not, T5 is a loud notification carrying a degrade note.
 
+### Mutes are ceilings, not points
+
+`/sieve mute T3 until 9am` silences T0 through T3. Nobody wants to mute each lower
+tier separately, so one command quiets a band. A mute never covers a tier above
+the one named: `mute T3` cannot silence a T4 alarm or a T5.
+
 ### Held is not dropped: the digest timer
 
 Held items resurface on a timer, not only when the user remembers to ask.

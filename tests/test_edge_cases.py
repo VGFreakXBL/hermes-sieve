@@ -82,11 +82,13 @@ def test_pause_at_exact_deadline_expires():
     assert scheduler.is_held(5, [], [], now.isoformat(timespec="seconds"), now)[0] is False
 
 
-def test_mute_is_exact_tier_not_a_band():
+def test_mute_covers_lower_tiers_but_never_alarms_above():
     now = datetime(2026, 11, 9, 8, 0, 0)
     mutes = [(1, 3, (now + timedelta(hours=1)).isoformat(timespec="seconds"))]
     assert scheduler.is_held(3, [], mutes, None, now)[0] is True
+    assert scheduler.is_held(1, [], mutes, None, now)[0] is True, "T1 is under a T3 ceiling"
     assert scheduler.is_held(4, [], mutes, None, now)[0] is False, "T4 must not inherit a T3 mute"
+    assert scheduler.is_held(5, [], mutes, None, now)[0] is False
 
 
 # --- time parsing ---------------------------------------------------------

@@ -3,7 +3,9 @@
 Semantics (locked in the design doc):
 - A quiet window holds every tier BELOW its floor (default floor=T4: T0-T3 held,
   T4/T5 breach). floor=5 -> sirens only; floor=0 -> nothing held by the window.
-- 'sieve mute <tier> until <when>' holds exactly that tier until the deadline.
+- 'sieve mute <tier> until <when>' holds that tier AND everything below it until
+  the deadline (mute T3 = T0-T3). Muting never covers an alarm above the named
+  tier, so 'mute T3' cannot silence a T5.
 - 'sieve pause 2h' holds EVERYTHING (including alarms) until the deadline.
 - Held never means dropped: held events land in the digest.
 """
@@ -104,8 +106,11 @@ def is_held(tier: int, windows, mutes, paused_until: str, now: datetime = None) 
         return True, f"paused until {paused_until}"
 
     for (_id, mut_tier, until_ts) in mutes:
-        if tier == mut_tier and until_ts > now_iso:
-            return True, f"tier T{tier} muted until {until_ts}"
+        # Mute is a ceiling, not a point: "mute T3" means T3 and below, because
+        # nobody wants to mute T0, T1, T2 and T3 separately to get quiet.
+        if tier <= mut_tier and until_ts > now_iso:
+            band = f"T0-T{mut_tier}" if mut_tier else "T0"
+            return True, f"{band} muted until {until_ts}"
 
     for (_id, start_hhmm, end_hhmm, days, floor_tier, label) in windows:
         try:

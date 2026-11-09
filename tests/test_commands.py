@@ -29,7 +29,7 @@ def test_status_and_why(monkeypatch, tmp_path):
 def test_mute_command(monkeypatch, tmp_path):
     conn = _fresh(monkeypatch, tmp_path)
     out = plugin._cmd("mute T4 until 9am")
-    assert "muted T4" in out
+    assert "muted T0-T4" in out
     assert queue.active_mutes(conn, queue.now_iso())
 
 
