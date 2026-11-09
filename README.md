@@ -141,6 +141,8 @@ hermes plugins enable sieve
 hermes plugins doctor ~/.hermes/plugins/sieve
 hermes plugins validate ~/.hermes/plugins/sieve --install-deps
 pytest ~/.hermes/plugins/sieve/tests -v
+# drive every desktop route and every /sieve subcommand against a temp store
+~/.hermes/hermes-agent/venv/bin/python ~/.hermes/plugins/sieve/scripts/click_pass.py
 ```
 
 ## License

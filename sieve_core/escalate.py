@@ -35,8 +35,17 @@ def _parse(result: str):
 def device_status(dispatch) -> dict:
     """Freshness + grants from mobile_devices (call it every time: the grant
     list is server-synced truth; a remembered scope is stale the moment the user
-    toggles a switch)."""
-    raw = _dispatch(dispatch, "mobile_devices", {})
+    toggles a switch).
+
+    Never raises. A readiness check that throws is indistinguishable from a busy
+    phone, and both must degrade the alert rather than abort it.
+    """
+    try:
+        raw = _dispatch(dispatch, "mobile_devices", {})
+    except Exception as exc:
+        return {"available": False, "reason": f"device toolset unavailable ({exc})"}
+    if isinstance(raw, str) and raw.startswith("ERROR"):
+        return {"available": False, "reason": raw[:200]}
     data = _parse(raw)
     if not data:
         return {"available": False, "reason": "mobile_device toolset unavailable"}
@@ -79,10 +88,17 @@ def fire_alarm(dispatch, label: str, at_iso: str = None, time_hhmm: str = None,
         args["time"] = time_hhmm
     else:
         return {"ok": False, "reason": "no schedule given"}
-    raw = _dispatch(dispatch, "mobile_alarm_create", args)
-    if raw.startswith("ERROR"):
+    try:
+        raw = _dispatch(dispatch, "mobile_alarm_create", args)
+    except Exception as exc:
+        return {"ok": False, "reason": f"alarm write could not be dispatched ({exc})"}
+    if str(raw).startswith("ERROR"):
         return {"ok": False, "reason": raw}
-    listing = _dispatch(dispatch, "mobile_alarms_list", {})
+    try:
+        listing = _dispatch(dispatch, "mobile_alarms_list", {})
+    except Exception as exc:
+        return {"ok": True, "verified": False,
+                "reason": f"alarm write accepted, read-back failed ({exc})"}
     data = _parse(listing)
     alarms = (data or {}).get("alarms", []) if isinstance(data, dict) else []
     verified = any(str(args["label"]) in str(a) for a in alarms) if alarms else False
@@ -92,18 +108,24 @@ def fire_alarm(dispatch, label: str, at_iso: str = None, time_hhmm: str = None,
 def fire_timer(dispatch, duration_seconds: int, label: str,
                idempotency_key: str = None) -> dict:
     key = idempotency_key or f"sieve-{uuid.uuid4()}"
-    raw = _dispatch(dispatch, "mobile_timer_start", {
-        "idempotency_key": key,
-        "duration_seconds": int(duration_seconds),
-        "label": (T4_LABEL.format(label=label))[:100],
-    })
-    return {"ok": not raw.startswith("ERROR"), "result": raw[:300]}
+    try:
+        raw = _dispatch(dispatch, "mobile_timer_start", {
+            "idempotency_key": key,
+            "duration_seconds": int(duration_seconds),
+            "label": (T4_LABEL.format(label=label))[:100],
+        })
+    except Exception as exc:
+        return {"ok": False, "reason": f"timer could not be dispatched ({exc})"}
+    return {"ok": not str(raw).startswith("ERROR"), "result": str(raw)[:300]}
 
 
 def fire_reminder(dispatch, title: str, due_iso: str, idempotency_key: str = None) -> dict:
     """Reminders always carry a due date: an undated item never fires."""
     key = idempotency_key or f"sieve-{uuid.uuid4()}"
-    raw = _dispatch(dispatch, "mobile_reminder_create", {
-        "idempotency_key": key, "title": title[:100], "due": due_iso,
-    })
-    return {"ok": not raw.startswith("ERROR"), "result": raw[:300]}
+    try:
+        raw = _dispatch(dispatch, "mobile_reminder_create", {
+            "idempotency_key": key, "title": title[:100], "due": due_iso,
+        })
+    except Exception as exc:
+        return {"ok": False, "reason": f"reminder could not be dispatched ({exc})"}
+    return {"ok": not str(raw).startswith("ERROR"), "result": str(raw)[:300]}
