@@ -11,8 +11,8 @@ TIERS = {
     1: "chip (desktop badge)",
     2: "notify (normal notification)",
     3: "interrupt (time-sensitive push)",
-    4: "pleasant alarm",
-    5: "top rung: alarm (same tone as T4 today)",
+    4: "alarm",
+    5: "alarm, top priority (push arm reserved)",
 }
 
 # Policy contexts: the matrix is event class x context -> tier. A context rule

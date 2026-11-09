@@ -53,10 +53,14 @@ user, and to be honest about which of those hits actually landed.
 | T4 | alarm | phone alarm (timer) | phone synced to this profile |
 | T5 | alarm, maximum priority | phone alarm (scheduled) | phone synced to this profile |
 
-**T4 and T5 are the same physical arm today.** The device API takes a label and a
-time; it has no sound, volume, or critical-alert parameter, so both rungs ring
-with the same tone. T5 differs only in intent and in how the policy uses it. Do
-not describe T5 as a siren until the arm can actually vary its output.
+**T4 and T5 share the alarm arm today.** The device API takes a label and a time;
+it has no sound, volume, or critical-alert parameter, so both rungs ring with the
+same tone. T5 is the reserved rung for a push-based arm: when the app exposes push
+that reaches a closed app or a locked phone, T5 upgrades to it with no policy
+migration, because the tier never changed, only the primitive. Do not describe T5
+as a siren. A push is still an ordinary notification unless it carries a
+Time Sensitive level or an Apple critical-alert entitlement, and the arm label has
+to say which of those it achieved.
 
 The planned T5 differentiation is persistence, not loudness: alarm, then a
 bounded number of repeats until it is dismissed. Dismissal is observable (a

@@ -79,6 +79,53 @@ Follow-up DM (not sent by the agent; CJ sends it):
 >
 > If the current beta can already do that, what should I set on the Mac today, on the default profile? Messy is fine. If the plugin is no longer called hermes-mobile-push, what is it called now? If it cannot work with the app closed yet, I'll film the siren with the app open and mark closed-app wake as a known limit.
 
+### Reserved rung: T5 becomes the push arm when push ships
+
+T5 stays in the vocabulary and keeps its policy meaning (**top priority**). It
+currently resolves to the alarm arm, which is the same tone as T4. When the
+Hermes app exposes a push path that reaches a closed app or a locked phone, T5
+upgrades to that arm with no policy migration, because the tier never changed,
+only the primitive assigned to it.
+
+**Trigger conditions for the flip.** T5 may claim the push arm only when all of
+these hold, checked at fire time rather than assumed from a changelog:
+
+1. A push plugin or relay is present for this profile and the device is
+   registered against it (the device-access plugin's own readiness signal, not a
+   maintainer saying "supported").
+2. A device write round-trips: send, then read the result back in the same
+   session. Same verification standard as the alarm arm today.
+3. The alert actually reaches the phone with the app closed. One live probe with
+   the app force-quit, recorded, before any copy claims it.
+
+**What T5 will and will not promise even then.** iOS delivers a normal push as an
+ordinary notification: Focus silences it unless the sender is allowed through,
+and it can be muted per conversation. A "Time Sensitive" interruption level
+breaks through Focus but not Silent. Genuine critical alerts that override the
+ringer require an Apple entitlement the app must hold. So the honest ladder after
+push ships is:
+
+- closed-app reach: yes, ordinary notification
+- Focus break-through: only if the push is Time Sensitive and the user allows it
+- ringer override: only with a critical-alert entitlement
+
+Never call that a siren. If the entitlement lands, T5 gets a third arm and the
+label becomes "critical alert". Until then the arm label states which of the three
+it achieved, exactly as the degrade path does today.
+
+**Acceptance test when push ships** (add to `scripts/click_pass.py` as a gated
+case, skipped while push is unavailable):
+
+- force-quit the app, fire T5, confirm delivery, confirm read-back, confirm the
+  message states the arm as `push (closed app)` rather than `alarm`
+- with the app open, fire T5, confirm it still prefers the push arm only if that
+  arm is strictly stronger than an alarm; otherwise keep the alarm, which rings
+  through Silent and Focus today
+
+That last point is the decision rule: an arm is preferred only when it is
+stronger, not newer. A notification never outranks an alarm that rings through a
+silenced phone.
+
 ## Design language notes
 
 ### Truth constraint: T4 and T5 share one arm
