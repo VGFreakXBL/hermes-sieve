@@ -24,6 +24,28 @@ def send(text: str, target: str = None, timeout: int = 30) -> bool:
         return False
 
 
+def parse_chain(raw) -> list:
+    """'telegram, photon:+15551234567' -> ['telegram', 'photon:+15551234567']."""
+    if not raw or not isinstance(raw, str):
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def send_chain(text: str, targets) -> dict:
+    """Send to every target in the chain. Success = at least one delivered.
+
+    Redundant on purpose: a T5 that reaches two independent pipes is worth the
+    duplicate. Returns {'delivered': bool, 'ok': [...], 'failed': [...]}.
+    """
+    targets = [t for t in targets if t]
+    if not targets or not text:
+        return {"delivered": False, "ok": [], "failed": targets or []}
+    ok, failed = [], []
+    for t in targets:
+        (ok if send(text, t) else failed).append(t)
+    return {"delivered": bool(ok), "ok": ok, "failed": failed}
+
+
 def format_digest(held_rows) -> str:
     """held_rows: queue.held_events() -> (id, ts, event_class, tier, payload_json)."""
     if not held_rows:

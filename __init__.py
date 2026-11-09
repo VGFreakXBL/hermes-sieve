@@ -123,8 +123,21 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
         return {"error": str(exc)[:200]}
 
 
+def _targets_for(conn, tier):
+    """Per-tier chain, else the global target, else the default.
+
+    A chain is redundant delivery, not failover: for T4/T5 the point is that the
+    alert arrives on at least one pipe the user actually looks at.
+    """
+    chain = delivery.parse_chain(queue.kv_get(conn, f"target:T{tier}"))
+    if chain:
+        return chain
+    raw = queue.kv_get(conn, "target") or DEFAULT_TARGET
+    return delivery.parse_chain(raw) or [DEFAULT_TARGET]
+
+
 def _deliver(conn, eid, event_class, payload, decision, detail=""):
-    target = queue.kv_get(conn, "target") or DEFAULT_TARGET
+    targets = _targets_for(conn, decision.tier)
     tier = decision.tier
     if tier >= 4:
         ready, why = escalate.push_ready(_dispatch)
@@ -134,18 +147,33 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
                 result = escalate.fire_alarm(_dispatch, event_class, at_iso=at)
             else:
                 result = escalate.fire_timer(_dispatch, 60, event_class)
-            delivery.send(delivery.format_event(event_class, tier, decision.label, detail), target)
-            return {"event_id": eid, "delivered": True, "escalated": result.get("ok"),
-                    "verified": result.get("verified"), "tier": tier}
+            sent = delivery.send_chain(
+                delivery.format_event(event_class, tier, decision.label, detail), targets)
+            verified = bool(result.get("verified"))
+            if result.get("ok") and not verified:
+                # Write accepted but not readable back: the phone has not synced.
+                # The message still went out, so nothing is lost; record the truth.
+                why = "alarm write unverified (phone not synced; open the Hermes app)"
+                queue.kv_set(conn, "escalation_degraded", why)
+                return {"event_id": eid, "delivered": sent["delivered"], "escalated": True,
+                        "verified": False, "degraded": why, "targets": sent, "tier": tier}
+            if not result.get("ok"):
+                queue.kv_set(conn, "escalation_degraded", str(result.get("reason"))[:200])
+            return {"event_id": eid, "delivered": sent["delivered"],
+                    "escalated": result.get("ok"), "verified": verified,
+                    "targets": sent, "tier": tier}
         # degrade: never drop, alarm impossible -> message + flag
         queue.kv_set(conn, "escalation_degraded", why)
         msg = delivery.format_event(event_class, 3, decision.label,
                                     f"[escalation degraded: {why}] {detail}")
-        delivery.send(msg, target)
-        return {"event_id": eid, "delivered": True, "degraded": why, "tier": tier}
+        sent = delivery.send_chain(msg, targets)
+        return {"event_id": eid, "delivered": sent["delivered"], "degraded": why,
+                "targets": sent, "tier": tier}
     if tier >= 2:
-        ok = delivery.send(delivery.format_event(event_class, tier, decision.label, detail), target)
-        return {"event_id": eid, "delivered": ok, "tier": tier}
+        sent = delivery.send_chain(
+            delivery.format_event(event_class, tier, decision.label, detail), targets)
+        return {"event_id": eid, "delivered": sent["delivered"],
+                "targets": sent, "tier": tier}
     # tier 1: chip only (desktop chip reads held/recent counts)
     return {"event_id": eid, "delivered": True, "chip": True, "tier": tier}
 
@@ -286,10 +314,40 @@ def _cmd_inner(conn, sub, rest) -> str:
         return out
 
     if sub == "target":
+        # /sieve target                          -> show global + per-tier chains
+        # /sieve target telegram                 -> set global
+        # /sieve target t5 telegram,photon:...   -> set chain for T5
+        # /sieve target t5 clear                 -> drop the per-tier override
         if not rest:
-            return f"target: {queue.kv_get(conn, 'target') or DEFAULT_TARGET + ' (default)'}"
-        queue.kv_set(conn, "target", rest[0])
-        return f"delivery target set: {rest[0]}"
+            global_t = queue.kv_get(conn, "target") or DEFAULT_TARGET
+            lines = [f"target: {global_t}" + (" (default)" if not queue.kv_get(conn, 'target') else "")]
+            for t in (2, 3, 4, 5):
+                chain = delivery.parse_chain(queue.kv_get(conn, f"target:T{t}"))
+                if chain:
+                    lines.append(f"  T{t}: {', '.join(chain)}")
+            lines.append("set with: /sieve target t5 telegram,photon:any;-;+15551234567")
+            return "\n".join(lines)
+        first = rest[0]
+        if first.lower().startswith("t") and first[1:].isdigit():
+            tier = int(first[1:])
+            if not 0 <= tier <= 5:
+                return "tier must be T0-T5"
+            if len(rest) == 1:
+                chain = delivery.parse_chain(queue.kv_get(conn, f"target:T{tier}"))
+                return f"T{tier} chain: {', '.join(chain) if chain else '(inherits global)'}"
+            if rest[1].lower() == "clear":
+                queue.kv_set(conn, f"target:T{tier}", "")
+                return f"T{tier} chain cleared (inherits global target)"
+            chain = delivery.parse_chain(rest[1])
+            if not chain:
+                return "empty chain"
+            queue.kv_set(conn, f"target:T{tier}", ",".join(chain))
+            return f"T{tier} chain set: {', '.join(chain)}"
+        chain = delivery.parse_chain(first)
+        if not chain:
+            return "empty target"
+        queue.kv_set(conn, "target", ",".join(chain))
+        return f"delivery target set: {', '.join(chain)}"
 
     if sub == "context":
         if not rest:
