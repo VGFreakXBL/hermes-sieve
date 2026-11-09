@@ -108,6 +108,22 @@ weaker class of interrupt than the mobile arm. SIEVE labels the tier it actually
 achieved, never the tier you hoped for. When the phone arm is live, T5 is a
 siren; when it is not, T5 is a loud notification carrying a degrade note.
 
+### Held is not dropped: the digest timer
+
+Held items resurface on a timer, not only when the user remembers to ask.
+`_maybe_digest` runs at session end (never mid-turn), sends one digest for
+everything held, releases those items, and stamps `last_digest_at`.
+
+```
+/sieve digest            # show interval, held count, last send
+/sieve digest 4           # every 4 hours
+/sieve digest off         # only on /sieve flush
+```
+
+Default is every 8 hours. Without this, a T0 "digest by design" event could sit
+forever, which would make "held never means dropped" a claim rather than a
+behavior.
+
 ### Moving policy between profiles
 
 Policy travels as a file, and the user moves it:

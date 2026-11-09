@@ -74,16 +74,24 @@ def parse_until(spec: str, now: datetime = None) -> datetime:
 
 
 def _in_window(now: datetime, start: tuple, end: tuple, days: str) -> bool:
-    if str(now.weekday()) not in (days or "0123456"):
-        return False
+    days = days or "0123456"
     cur = now.hour * 60 + now.minute
     s = start[0] * 60 + start[1]
     e = end[0] * 60 + end[1]
     if s == e:
-        return True  # 24h window
+        return str(now.weekday()) in days  # 24h window
     if s < e:
-        return s <= cur < e
-    return cur >= s or cur < e  # overnight span (e.g. 23:00-08:00)
+        return str(now.weekday()) in days and s <= cur < e
+    # Overnight span (e.g. 23:00-08:00). Before the end time we are still inside
+    # the night that STARTED the previous day, so the day selector must be
+    # attributed to the start, not to this morning. Otherwise a Friday-night
+    # window stops being quiet at midnight and the 2am-7am tail rings.
+    if cur >= s:
+        return str(now.weekday()) in days
+    if cur < e:
+        start_day = (now.weekday() - 1) % 7
+        return str(start_day) in days
+    return False  # between the end and the start: outside the window
 
 
 def is_held(tier: int, windows, mutes, paused_until: str, now: datetime = None) -> tuple:

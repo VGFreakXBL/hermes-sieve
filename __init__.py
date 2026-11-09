@@ -60,8 +60,17 @@ def _promote_sweep(conn) -> int:
     rows = queue.stale_holds(conn, cutoff)
     n = 0
     for (hold_id, eid, tier, event_class) in rows:
-        queue.release_one(conn, hold_id)
         new_tier = min(tier + 1, 5)
+        # The ladder exists to defeat inattention, not the user's stated silence.
+        # If the next rung would still be held (pause, mute, quiet floor), leave
+        # the item alone: escalating it here would ring at 2am during a paused or
+        # silenced window, which is the one thing the boundary must never do.
+        still_held, _why = scheduler.is_held(
+            new_tier, queue.windows(conn), queue.active_mutes(conn, queue.now_iso()),
+            queue.kv_get(conn, "paused_until"))
+        if still_held:
+            continue
+        queue.release_one(conn, hold_id)
         decision = matrix.Decision(tier=new_tier, rule_id=f"promoted:{eid}",
                                    label=f"promotion ladder: held {promo}m, escalated T{tier}->T{new_tier}",
                                    source="user")
@@ -70,6 +79,52 @@ def _promote_sweep(conn) -> int:
         _deliver(conn, eid, event_class, {}, decision, detail=f"was held since {cutoff}")
         n += 1
     return n
+
+
+def _maybe_digest(conn, now=None) -> str:
+    """Resurface held items on a timer. Held must never mean forgotten.
+
+    Called at session end so it never interrupts a turn. Interval comes from
+    `digest_every_hours` (default 8, 0 disables). Nothing else in the plugin
+    schedules a digest, so without this held items only resurface when the user
+    happens to run /sieve flush.
+    """
+    hours = float(queue.kv_get(conn, "digest_every_hours") or 8)
+    if hours <= 0:
+        return ""
+    rows = queue.held_events(conn)
+    if not rows:
+        return ""
+    now = now or datetime.now()
+    last = queue.kv_get(conn, "last_digest_at")
+    if last:
+        try:
+            if (now - datetime.fromisoformat(last)).total_seconds() < hours * 3600:
+                return ""
+        except Exception:
+            pass
+    target = queue.kv_get(conn, "target") or DEFAULT_TARGET
+    delivery.send_chain(delivery.format_digest(rows), _targets_for(conn, 0))
+    queue.release_all(conn)
+    queue.kv_set(conn, "last_digest_at", now.isoformat(timespec="seconds"))
+    return f"digest sent: {len(rows)} held item(s)"
+
+
+def _safe_route(event_class: str, payload: dict, detail: str = "") -> dict:
+    """Hook entry point. Fails closed and quiet.
+
+    A boundary plugin that raises into the host can break the user's turn, and a
+    boundary that breaks the thing it is guarding is worse than no boundary. The
+    error is recorded for `/sieve why` instead of propagating.
+    """
+    try:
+        return _route(event_class, payload, detail)
+    except Exception as exc:
+        try:
+            queue.kv_set(queue.db(), "last_hook_error", f"{event_class}: {exc}"[:200])
+        except Exception:
+            pass
+        return {"error": "hook error swallowed", "detail": str(exc)[:200]}
 
 
 def _route(event_class: str, payload: dict, detail: str = "") -> dict:
@@ -90,9 +145,11 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
         if decision.tier == 0 and not held:
             held, reason = True, "tier T0 -> digest by design"
 
-        # attention budget: cap interrupts per rolling hour; overflow auto-holds
+        # attention budget: cap interrupts per rolling hour; overflow auto-holds.
+        # Applies to chatter only (T2/T3). An alarm or gate is not chatter: a
+        # budget that swallows a T4 defeats the reason the tier exists.
         budget = int(queue.kv_get(conn, "budget_per_hour") or 0)
-        if not held and budget and decision.tier >= 2:
+        if not held and budget and 2 <= decision.tier <= 3:
             since = (now - timedelta(hours=1)).isoformat(timespec="seconds")
             if queue.recent_deliveries(conn, since) >= budget:
                 held, reason = True, f"attention budget ({budget}/h) reached"
@@ -118,7 +175,12 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
             queue.add_hold(conn, eid)
             return {"event_id": eid, "held": True, "reason": reason, "tier": decision.tier}
 
-        return _deliver(conn, eid, event_class, payload, decision, detail)
+        result = _deliver(conn, eid, event_class, payload, decision, detail)
+        if result.get("delivered") is False:
+            queue.set_event_outcome(
+                conn, eid, "failed",
+                f"{detail} | delivery failed on every target".strip(" |"))
+        return result
     except Exception as exc:
         return {"error": str(exc)[:200]}
 
@@ -231,6 +293,23 @@ def _cmd_inner(conn, sub, rest) -> str:
         if held:
             lines.append(f"held now: {len(held)} item(s) awaiting digest")
         return "\n".join(lines)
+
+    if sub == "digest":
+        if not rest:
+            every = queue.kv_get(conn, "digest_every_hours") or "8"
+            held = queue.held_count(conn)
+            last = queue.kv_get(conn, "last_digest_at") or "never"
+            return (f"digest every {every}h (0=off) | {held} held | last sent: {last}")
+        arg = rest[0].lower()
+        if arg in ("off", "0", "never"):
+            queue.kv_set(conn, "digest_every_hours", "0")
+            return "digest disabled (held items only on /sieve flush)"
+        try:
+            hours = float(arg.rstrip("h"))
+        except ValueError:
+            return "usage: /sieve digest [<hours>|off]"
+        queue.kv_set(conn, "digest_every_hours", str(hours))
+        return f"digest every {hours}h"
 
     if sub == "flush":
         rows = queue.held_events(conn)
@@ -458,28 +537,34 @@ def register(ctx):
     # --- routing hooks (the SIEVE boundary) --------------------------------
     def hook_needs_human(*args, **kwargs):
         kind = kwargs.get("kind") or (args[0] if args else "unknown")
-        _route("needs_human", {"kind": str(kind), "platform": str(kwargs.get("platform", "")),
+        _safe_route("needs_human", {"kind": str(kind), "platform": str(kwargs.get("platform", "")),
                                "summary": str(kwargs.get("prompt", ""))[:200]})
 
     ctx.register_hook("on_human_input_request", hook_needs_human)
 
     def hook_kanban_blocked(*args, **kwargs):
-        _route("needs_human", {"kind": "kanban", "summary": str(kwargs)[:200]})
+        _safe_route("needs_human", {"kind": "kanban", "summary": str(kwargs)[:200]})
 
     ctx.register_hook("kanban_task_blocked", hook_kanban_blocked)
 
     def hook_subagent_stop(*args, **kwargs):
-        _route("task_done", {"summary": f"subagent finished: {str(kwargs)[:150]}"})
+        _safe_route("task_done", {"summary": f"subagent finished: {str(kwargs)[:150]}"})
 
     ctx.register_hook("subagent_stop", hook_subagent_stop)
 
     def hook_session_end(*args, **kwargs):
+        # Digest opportunity first: session end is the natural place to resurface
+        # held items, and doing it here never interrupts a turn.
+        try:
+            _maybe_digest(queue.db())
+        except Exception:
+            pass
         task_id = kwargs.get("task_id") or ""
         if not task_id:
             return  # ordinary conversation end: not a notification
         failed = kwargs.get("failed")
         event_class = "task_failed" if failed else "cron_done"
-        _route(event_class, {"summary": f"run {task_id} exit={kwargs.get('turn_exit_reason', '')}"[:200]})
+        _safe_route(event_class, {"summary": f"run {task_id} exit={kwargs.get('turn_exit_reason', '')}"[:200]})
 
     ctx.register_hook("on_session_end", hook_session_end)
 
@@ -500,5 +585,5 @@ def register(ctx):
     # --- commands ----------------------------------------------------------
     ctx.register_command(
         "sieve", _cmd,
-        description="SIEVE notification boundary: status|why|flush|mute|quiet|pause|rules|doctor|test|target|export|import",
+        description="SIEVE notification boundary: status|why|flush|digest|mute|quiet|pause|rules|doctor|test|target|export|import",
         args_hint="[subcommand] [args]")

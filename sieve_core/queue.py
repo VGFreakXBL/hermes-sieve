@@ -59,6 +59,18 @@ def log_event(conn, event_class, payload, tier, action, rule_id=None, detail="")
     return cur.lastrowid
 
 
+def set_event_outcome(conn, event_id, action: str, detail: str = "") -> None:
+    """Correct the log after the fact.
+
+    _route logs the event before delivery is attempted, so a failed send would
+    otherwise be recorded as delivered and poison /sieve why and the rule stats.
+    The log has to describe what happened, not what was intended.
+    """
+    conn.execute("UPDATE events SET action = ?, detail = ? WHERE id = ?",
+                 (action, detail, event_id))
+    conn.commit()
+
+
 def add_hold(conn, event_id, hold_until=None) -> None:
     conn.execute("INSERT INTO holds(event_id, hold_until) VALUES(?,?)", (event_id, hold_until))
     conn.commit()
@@ -325,11 +337,23 @@ def import_policy(conn, data, replace: bool = False) -> dict:
                          (r["event_class"], json.dumps(r.get("match") or {})))
         applied["rules"] += 1
     for w in windows_in:
-        add_window(conn, w["start_hhmm"], w["end_hhmm"], str(w.get("days") or "0123456"),
-                   int(w["floor_tier"]), label=str(w.get("label") or ""))
+        start, end = w["start_hhmm"], w["end_hhmm"]
+        days, floor = str(w.get("days") or "0123456"), int(w["floor_tier"])
+        # Import is idempotent: re-applying the same policy must not stack a
+        # second identical window and double every quiet period.
+        exists = conn.execute(
+            "SELECT 1 FROM quiet_windows WHERE start_hhmm=? AND end_hhmm=? AND days=? AND floor_tier=?",
+            (start, end, days, floor)).fetchone()
+        if exists:
+            continue
+        add_window(conn, start, end, days, floor, label=str(w.get("label") or ""))
         applied["quiet_windows"] += 1
     for m in mutes_in:
         if _valid_tier(m.get("tier")) and isinstance(m.get("until_ts"), str):
+            exists = conn.execute("SELECT 1 FROM mutes WHERE tier=? AND until_ts=?",
+                                  (int(m["tier"]), m["until_ts"])).fetchone()
+            if exists:
+                continue
             add_mute(conn, int(m["tier"]), m["until_ts"])
             applied["mutes"] += 1
     for k, v in kv_in.items():
