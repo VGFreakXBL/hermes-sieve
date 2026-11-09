@@ -12,7 +12,7 @@ TIERS = {
     2: "notify (normal notification)",
     3: "interrupt (time-sensitive push)",
     4: "pleasant alarm",
-    5: "siren (through Silent+Focus)",
+    5: "top rung: alarm (same tone as T4 today)",
 }
 
 # Policy contexts: the matrix is event class x context -> tier. A context rule

@@ -81,6 +81,19 @@ Follow-up DM (not sent by the agent; CJ sends it):
 
 ## Design language notes
 
+### Truth constraint: T4 and T5 share one arm
+
+The device API accepts `at`/`time`/`weekdays`/`label` only. No sound, volume, or
+critical-alert parameter exists, so a T4 timer and a T5 alarm ring with the same
+tone. T5 is therefore "maximum priority" in policy terms, not a distinct audible
+primitive. Any copy that calls T5 a siren is wrong until the arm can vary output.
+
+Planned differentiation is bounded persistence, not loudness: alarm, then at most
+two repeats, stopping when the alarm leaves `mobile_alarms_list` (dismissal is
+observable: a fired-and-dismissed alarm is absent from the list). Bounded so a
+failed dismissal signal costs one extra ring instead of an unstoppable alarm.
+Explicit escape: `/sieve ack`. Not shipping before the hackathon deadline.
+
 - The host app's Desktop SDK IS the design system: native components, theme
   vars, one accent (intensity carries tier, never a rainbow), semantic badges
   only, dense-but-breathing layout, functional labels.

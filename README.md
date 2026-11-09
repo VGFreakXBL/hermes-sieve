@@ -10,7 +10,7 @@ A tier is an **intent**. An arm is the **primitive that executed it**. SIEVE
 reports both, always, in the same message:
 
 ```
-SIEVE [service_down] T5 siren (through Silent+Focus)
+SIEVE [service_down] T5 top rung: alarm (same tone as T4 today)
 arm: phone alarm (rings through Silent + Focus) [verified]
 ```
 
@@ -18,7 +18,7 @@ When the alarm arm is unavailable, the requested tier is not demoted. It stays
 T5, and the message names the standing it reached instead:
 
 ```
-SIEVE [service_down] T5 siren (through Silent+Focus)
+SIEVE [service_down] T5 top rung: alarm (same tone as T4 today)
 arm: messaging push — max interrupt available (alarm arm unavailable)
 [escalation degraded: device stale (no recent sync; open the Hermes app)]
 ```
@@ -44,20 +44,32 @@ is the receipt.
 SIEVE's job is not to deliver a message. It is to decide how hard to hit the
 user, and to be honest about which of those hits actually landed.
 
-| Tier | Intent | Requires |
-|---|---|---|
-| T0 | silent, digest only | nothing |
-| T1 | desktop chip, no message | nothing |
-| T2 | one notification | a configured delivery target |
-| T3 | interrupt now | a configured delivery target |
-| T4 | pleasant alarm (timer chime) | phone synced to this profile |
-| T5 | siren through Silent + Focus | phone synced to this profile |
+| Tier | Intent | Primitive | Requires |
+|---|---|---|---|
+| T0 | silent, digest only | none | nothing |
+| T1 | desktop chip, no message | chip | nothing |
+| T2 | one notification | messaging push | a configured delivery target |
+| T3 | interrupt now | messaging push | a configured delivery target |
+| T4 | alarm | phone alarm (timer) | phone synced to this profile |
+| T5 | alarm, maximum priority | phone alarm (scheduled) | phone synced to this profile |
+
+**T4 and T5 are the same physical arm today.** The device API takes a label and a
+time; it has no sound, volume, or critical-alert parameter, so both rungs ring
+with the same tone. T5 differs only in intent and in how the policy uses it. Do
+not describe T5 as a siren until the arm can actually vary its output.
+
+The planned T5 differentiation is persistence, not loudness: alarm, then a
+bounded number of repeats until it is dismissed. Dismissal is observable (a
+fired-and-dismissed alarm leaves `mobile_alarms_list`), so the acknowledgement is
+the natural gesture rather than a command the user has to learn. It stays
+**bounded** on purpose: if the dismissal signal ever fails, the cost is one extra
+ring, not an alarm that will not stop.
 
 T4/T5 need the mobile arm: the phone must be reachable from this profile and a
 device write must be readable back. When that arm is unavailable, SIEVE does
 **not** drop the alert and does **not** claim it fired an alarm. It sends the
-event at T3 with an explicit `[escalation degraded: ...]` reason, records the
-same reason in state, and reports `verified: false`.
+event through the tier's chain with an explicit `[escalation degraded: ...]`
+reason, records the same reason in state, and reports `verified: false`.
 
 That distinction is the point. A notification that arrives is not the same thing
 as an alarm that rings, and a boundary tool that blurs them is worse than no

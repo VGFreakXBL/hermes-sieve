@@ -39,7 +39,7 @@ def test_degraded_top_tier_keeps_tier_and_names_the_arm(monkeypatch, tmp_path):
     assert out["degraded"] == "device stale"
     body = sent[0]
     assert "T5" in body, "the requested tier must still be visible"
-    assert "siren" in body
+    assert "top rung: alarm" in body
     assert "max interrupt available" in body
     assert "escalation degraded: device stale" in body
 

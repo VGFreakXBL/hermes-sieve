@@ -309,7 +309,7 @@ def _cmd_inner(conn, sub, rest) -> str:
         key = f"sieve-test-{int(datetime.now().timestamp())}"
         if tier >= 5:
             at = (datetime.now() + timedelta(minutes=1)).isoformat(timespec="seconds")
-            result = escalate.fire_alarm(_dispatch, "SIEVE TEST (siren tier)", at_iso=at,
+            result = escalate.fire_alarm(_dispatch, "SIEVE TEST (alarm tier)", at_iso=at,
                                         idempotency_key=key)
         else:
             result = escalate.fire_timer(_dispatch, 60, "SIEVE TEST (pleasant tier)",
