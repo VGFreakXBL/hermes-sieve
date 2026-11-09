@@ -61,10 +61,36 @@ def format_digest(held_rows) -> str:
     return "\n".join(lines)
 
 
-def format_event(event_class: str, tier: int, label: str, detail: str = "") -> str:
+def format_event(event_class: str, tier: int, label: str, detail: str = "",
+                 arm: "str | None" = None, degraded: "str | None" = None) -> str:
+    """One message shape carries both axes.
+
+    `tier` is the intent the policy chose. `arm` is the primitive that actually
+    carried it out. They are stated separately so a T5 that landed as a push says
+    so in the same line instead of being quietly relabelled or silently demoted.
+    """
     from .matrix import TIERS
     head = f"SIEVE [{event_class}] T{tier} {TIERS.get(tier, '')}"
+    if arm:
+        head += f"\narm: {arm}"
     body = f"{head}\n{label}"
+    if degraded:
+        body += f"\n[escalation degraded: {degraded}]"
     if detail:
         body += f"\n{detail[:300]}"
     return body
+
+
+def arm_label(tier: int, achieved: str, why: "str | None" = None) -> str:
+    """Human label for the achieved arm, with the requested tier as context."""
+    if achieved == "alarm":
+        return "phone alarm (rings through Silent + Focus)"
+    if achieved == "timer":
+        return "phone timer chime (rings through Silent + Focus)"
+    if achieved == "push":
+        if tier >= 4:
+            return "messaging push — max interrupt available (alarm arm unavailable)"
+        return "messaging push"
+    if achieved == "chip":
+        return "desktop chip only"
+    return achieved

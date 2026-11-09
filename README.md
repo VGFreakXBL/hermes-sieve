@@ -4,6 +4,41 @@ A user-owned notification boundary for Hermes Agent: event classes × escalation
 
 Status: under construction for the Hermes Plugin Hackathon. Disclosures and screenshots land here before the catalog PR.
 
+### Two axes: what you asked for, and what actually carried it
+
+A tier is an **intent**. An arm is the **primitive that executed it**. SIEVE
+reports both, always, in the same message:
+
+```
+SIEVE [service_down] T5 siren (through Silent+Focus)
+arm: phone alarm (rings through Silent + Focus) [verified]
+```
+
+When the alarm arm is unavailable, the requested tier is not demoted. It stays
+T5, and the message names the standing it reached instead:
+
+```
+SIEVE [service_down] T5 siren (through Silent+Focus)
+arm: messaging push — max interrupt available (alarm arm unavailable)
+[escalation degraded: device stale (no recent sync; open the Hermes app)]
+```
+
+Three states, not two:
+
+| State | Tier line | Arm line |
+|---|---|---|
+| full | T5 siren | `phone alarm ... [verified]` |
+| accepted but unconfirmed | T5 siren | `phone alarm ... [write unverified]` |
+| degraded | T5 siren | `messaging push — max interrupt available (alarm unavailable)` |
+
+The reason for the split: relabelling T5 as "max interrupt" destroys the
+distinction the ladder exists to make, and silently demoting to T3 destroys the
+user's stated priority. Keeping both facts lets the alert read as *this was
+siren-class urgency, delivered by the strongest arm currently standing.*
+
+That is the middle ground. "Best available arm" is the framing; the degrade note
+is the receipt.
+
 ## The escalation ladder, and what each rung can physically do
 
 SIEVE's job is not to deliver a message. It is to decide how hard to hit the

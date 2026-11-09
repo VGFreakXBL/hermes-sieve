@@ -145,34 +145,41 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
             if tier == 5:
                 at = (datetime.now() + timedelta(minutes=1)).isoformat(timespec="seconds")
                 result = escalate.fire_alarm(_dispatch, event_class, at_iso=at)
+                achieved = "alarm"
             else:
                 result = escalate.fire_timer(_dispatch, 60, event_class)
-            sent = delivery.send_chain(
-                delivery.format_event(event_class, tier, decision.label, detail), targets)
+                achieved = "timer"
             verified = bool(result.get("verified"))
+            arm = delivery.arm_label(tier, achieved)
+            if achieved == "alarm":
+                arm += " [verified]" if verified else " [write unverified]"
+            sent = delivery.send_chain(
+                delivery.format_event(event_class, tier, decision.label, detail, arm=arm), targets)
             if result.get("ok") and not verified:
                 # Write accepted but not readable back: the phone has not synced.
                 # The message still went out, so nothing is lost; record the truth.
                 why = "alarm write unverified (phone not synced; open the Hermes app)"
                 queue.kv_set(conn, "escalation_degraded", why)
                 return {"event_id": eid, "delivered": sent["delivered"], "escalated": True,
-                        "verified": False, "degraded": why, "targets": sent, "tier": tier}
+                        "arm": achieved, "verified": False, "degraded": why,
+                        "targets": sent, "tier": tier}
             if not result.get("ok"):
                 queue.kv_set(conn, "escalation_degraded", str(result.get("reason"))[:200])
             return {"event_id": eid, "delivered": sent["delivered"],
-                    "escalated": result.get("ok"), "verified": verified,
+                    "escalated": result.get("ok"), "arm": achieved, "verified": verified,
                     "targets": sent, "tier": tier}
-        # degrade: never drop, alarm impossible -> message + flag
+        # Degrade: keep the requested tier as intent, name the arm that carried it.
         queue.kv_set(conn, "escalation_degraded", why)
-        msg = delivery.format_event(event_class, 3, decision.label,
-                                    f"[escalation degraded: {why}] {detail}")
+        msg = delivery.format_event(event_class, tier, decision.label, detail,
+                                    arm=delivery.arm_label(tier, "push"), degraded=why)
         sent = delivery.send_chain(msg, targets)
-        return {"event_id": eid, "delivered": sent["delivered"], "degraded": why,
-                "targets": sent, "tier": tier}
+        return {"event_id": eid, "delivered": sent["delivered"], "arm": "push",
+                "degraded": why, "targets": sent, "tier": tier}
     if tier >= 2:
+        arm = delivery.arm_label(tier, "push")
         sent = delivery.send_chain(
-            delivery.format_event(event_class, tier, decision.label, detail), targets)
-        return {"event_id": eid, "delivered": sent["delivered"],
+            delivery.format_event(event_class, tier, decision.label, detail, arm=arm), targets)
+        return {"event_id": eid, "delivered": sent["delivered"], "arm": "push",
                 "targets": sent, "tier": tier}
     # tier 1: chip only (desktop chip reads held/recent counts)
     return {"event_id": eid, "delivered": True, "chip": True, "tier": tier}
