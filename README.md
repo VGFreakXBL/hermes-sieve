@@ -104,6 +104,30 @@ weaker class of interrupt than the mobile arm. SIEVE labels the tier it actually
 achieved, never the tier you hoped for. When the phone arm is live, T5 is a
 siren; when it is not, T5 is a loud notification carrying a degrade note.
 
+### Moving policy between profiles
+
+Policy travels as a file, and the user moves it:
+
+```
+/sieve export [path]                 # writes ~/.hermes/sieve-policy.json by default
+/sieve import <path>                 # merge into this profile
+/sieve import <path> replace         # replace this profile's user policy first
+```
+
+The file carries user rules only. Seeded defaults live in code, so importing a
+policy never freezes a stale copy of them. Operational state stays behind:
+`paused_until` and `escalation_degraded` describe this machine right now, not
+policy, and are refused if present in the file.
+
+**There is deliberately no cross-profile write.** A plugin running in one profile
+does not reach into another profile's store to install policy. Profiles are a
+boundary, and a boundary tool that violates one has no standing to enforce
+anything. Export on the profile that has it right, import in the profile that
+should own it, one command each.
+
+Import validates the whole file before writing anything, so a malformed policy is
+refused instead of half-applied.
+
 ## Install (once cataloged)
 
 ```

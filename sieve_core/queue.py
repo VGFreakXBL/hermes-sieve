@@ -100,6 +100,24 @@ def all_rules(conn):
 
 
 def add_rule(conn, event_class, match, tier, label="", source="user") -> int:
+    """User rules are a keyed setting, not an append-only log.
+
+    Re-adding the same class+match must change the tier, not stack a second row.
+    Stacking is not cosmetic: decide() prefers the most specific match and keeps
+    the first on a tie, so an older duplicate silently wins and the user's edit
+    appears to do nothing.
+    """
+    if source == "user":
+        existing = conn.execute(
+            "SELECT id FROM rules WHERE event_class = ? AND match_json = ? AND source = 'user'",
+            (event_class, json.dumps(match))).fetchone()
+        if existing:
+            # Update in place: events.rule_id points at this id, and reusing a
+            # deleted rowid would silently re-label history as a different rule.
+            conn.execute("UPDATE rules SET tier = ?, label = ? WHERE id = ?",
+                         (tier, label, existing[0]))
+            conn.commit()
+            return int(existing[0])
     cur = conn.execute(
         "INSERT INTO rules(event_class, match_json, tier, label, source, created_at)"
         " VALUES(?,?,?,?,?,?)",
@@ -208,3 +226,114 @@ def context_rules(conn):
         if ctx_name:
             out.append((cls, ctx_name, tier, bool(enabled)))
     return out
+
+
+# --- policy export / import ------------------------------------------------
+# Policy travels as a file, never as a cross-profile write. A plugin running in
+# one profile must not reach into another profile's store: profiles are a
+# boundary, and a boundary tool that violates one is not trustworthy. The user
+# moves the file and runs import in the profile that should own the policy.
+
+POLICY_KV = (
+    "target", "target:T2", "target:T3", "target:T4", "target:T5",
+    "budget_per_hour", "repeat_limit_hours", "promo_minutes",
+)
+# Operational state stays behind: it describes this machine right now, not policy.
+POLICY_EXCLUDED_KV = ("paused_until", "escalation_degraded")
+
+
+def export_policy(conn) -> dict:
+    """User-authored policy only. Seeded defaults live in code, not in the file."""
+    rules = [
+        {"event_class": cls, "match": json.loads(match_json or "{}"),
+         "tier": tier, "enabled": bool(enabled), "label": label}
+        for (cls, match_json, tier, enabled, label) in conn.execute(
+            "SELECT event_class, match_json, tier, enabled, label FROM rules"
+            " WHERE source = 'user' ORDER BY id").fetchall()
+    ]
+    windows_out = [
+        {"start_hhmm": s, "end_hhmm": e, "days": d, "floor_tier": f, "label": lb}
+        for (s, e, d, f, lb) in conn.execute(
+            "SELECT start_hhmm, end_hhmm, days, floor_tier, label FROM quiet_windows"
+            " ORDER BY id").fetchall()
+    ]
+    mutes_out = [
+        {"tier": t, "until_ts": u}
+        for (t, u) in conn.execute(
+            "SELECT tier, until_ts FROM mutes WHERE until_ts > ? ORDER BY id",
+            (now_iso(),)).fetchall()
+    ]
+    kv_out = {}
+    for k in POLICY_KV:
+        v = kv_get(conn, k)
+        if v not in (None, ""):
+            kv_out[k] = v
+    return {
+        "sieve_policy_version": 1,
+        "exported_at": now_iso(),
+        "rules": rules,
+        "quiet_windows": windows_out,
+        "mutes": mutes_out,
+        "kv": kv_out,
+    }
+
+
+def _valid_tier(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 5
+
+
+def import_policy(conn, data, replace: bool = False) -> dict:
+    """Apply an exported policy to THIS profile. Validates before writing anything."""
+    if not isinstance(data, dict):
+        raise ValueError("policy file is not an object")
+    if data.get("sieve_policy_version") != 1:
+        raise ValueError("unsupported sieve_policy_version (expected 1)")
+
+    rules_in = data.get("rules") or []
+    windows_in = data.get("quiet_windows") or []
+    mutes_in = data.get("mutes") or []
+    kv_in = data.get("kv") or {}
+    if not isinstance(rules_in, list) or not isinstance(windows_in, list)             or not isinstance(mutes_in, list) or not isinstance(kv_in, dict):
+        raise ValueError("policy file has the wrong shape")
+
+    # Validate the whole file first: a half-applied policy is worse than none.
+    for r in rules_in:
+        if not isinstance(r, dict) or not isinstance(r.get("event_class"), str) \
+                or not r.get("event_class") or not _valid_tier(r.get("tier")) \
+                or not isinstance(r.get("match") or {}, dict):
+            raise ValueError("invalid rule in policy file")
+    for w in windows_in:
+        if not isinstance(w, dict) or not isinstance(w.get("start_hhmm"), str) \
+                or not isinstance(w.get("end_hhmm"), str) or not _valid_tier(w.get("floor_tier")):
+            raise ValueError("invalid quiet window in policy file")
+    for k in kv_in:
+        if k not in POLICY_KV:
+            raise ValueError(f"key '{k}' is not a portable policy key")
+
+    applied = {"rules": 0, "quiet_windows": 0, "mutes": 0, "kv": 0}
+    if replace:
+        conn.execute("DELETE FROM rules WHERE source = 'user'")
+        conn.execute("DELETE FROM quiet_windows")
+        conn.execute("DELETE FROM mutes")
+
+    for r in rules_in:
+        add_rule(conn, r["event_class"], r.get("match") or {}, int(r["tier"]),
+                 label=str(r.get("label") or ""), source="user")
+        if r.get("enabled") is False:
+            conn.execute("UPDATE rules SET enabled = 0 WHERE event_class = ?"
+                         " AND match_json = ? AND source = 'user'",
+                         (r["event_class"], json.dumps(r.get("match") or {})))
+        applied["rules"] += 1
+    for w in windows_in:
+        add_window(conn, w["start_hhmm"], w["end_hhmm"], str(w.get("days") or "0123456"),
+                   int(w["floor_tier"]), label=str(w.get("label") or ""))
+        applied["quiet_windows"] += 1
+    for m in mutes_in:
+        if _valid_tier(m.get("tier")) and isinstance(m.get("until_ts"), str):
+            add_mute(conn, int(m["tier"]), m["until_ts"])
+            applied["mutes"] += 1
+    for k, v in kv_in.items():
+        kv_set(conn, k, v)
+        applied["kv"] += 1
+    conn.commit()
+    return applied

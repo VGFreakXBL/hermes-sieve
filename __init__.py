@@ -392,7 +392,43 @@ def _cmd_inner(conn, sub, rest) -> str:
         queue.kv_set(conn, "promo_minutes", rest[0])
         return f"promotion ladder set: held items escalate after {rest[0]} min"
 
-    return "commands: status | why | flush | mute | quiet | pause | rules | context | simulate | budget | promote | doctor | test | target"
+    if sub == "export":
+        import os
+        path = rest[0] if rest else os.path.expanduser("~/.hermes/sieve-policy.json")
+        path = os.path.expanduser(path)
+        data = queue.export_policy(conn)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+        return (f"policy exported: {len(data['rules'])} rule(s), "
+                f"{len(data['quiet_windows'])} window(s), {len(data['mutes'])} mute(s), "
+                f"{len(data['kv'])} setting(s) -> {path}")
+
+    if sub == "import":
+        import os
+        if not rest:
+            return "usage: /sieve import <path> [replace]"
+        path = os.path.expanduser(rest[0])
+        replace = len(rest) > 1 and rest[1].lower() in ("replace", "overwrite")
+        if not os.path.exists(path):
+            return f"no such policy file: {path}"
+        if os.path.getsize(path) > 1_000_000:
+            return "policy file too large (1MB limit)"
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as exc:
+            return f"policy file is not valid JSON: {exc}"
+        try:
+            applied = queue.import_policy(conn, data, replace=replace)
+        except Exception as exc:
+            return f"import refused: {exc}"
+        mode = "replaced" if replace else "merged"
+        return (f"policy {mode}: {applied['rules']} rule(s), "
+                f"{applied['quiet_windows']} window(s), {applied['mutes']} mute(s), "
+                f"{applied['kv']} setting(s). Run /sieve status to confirm.")
+
+    return ("commands: status | why | flush | mute | quiet | pause | rules | context | "
+            "simulate | budget | promote | export | import | doctor | test | target")
 
 
 # --- registration -----------------------------------------------------------
@@ -464,5 +500,5 @@ def register(ctx):
     # --- commands ----------------------------------------------------------
     ctx.register_command(
         "sieve", _cmd,
-        description="SIEVE notification boundary: status|why|flush|mute|quiet|pause|rules|doctor|test|target",
+        description="SIEVE notification boundary: status|why|flush|mute|quiet|pause|rules|doctor|test|target|export|import",
         args_hint="[subcommand] [args]")
