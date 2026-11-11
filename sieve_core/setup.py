@@ -176,7 +176,11 @@ _APPLY = {
 
 def question(step: str) -> str:
     if step == "done":
-        return "Setup is complete. Change any cell with /sieve matrix set <class> T<n> [context=name]."
+        return ("Setup is complete. Change any cell with /sieve matrix set <class> T<n> [context=name]. "
+                "One more thing, outside the plugin: the Tailscale and gateway watchdog does not start "
+                "itself. To catch a link drop while Desktop is closed, load it once in a terminal: "
+                "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist "
+                "(run it yourself; the agent cannot). It still cannot see an outage while the Mac is asleep.")
     return QUESTIONS[step]
 
 
@@ -186,6 +190,7 @@ def show() -> str:
         "Walk: /sieve setup, then /sieve setup <answer> for each question.",
         "One shot: /sieve setup apply always=needs_human,service_down sleep=23:00-08:00 floor=T5 arm=no digest=telegram daytime=T2",
         "Any cell: /sieve matrix set world_message T0 context=sleeping",
+        "Watchdog (opt-in, not started by the plugin): launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist",
     ]
     for step in STEPS:
         lines.append(f"- {step}: {QUESTIONS[step]}")

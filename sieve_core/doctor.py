@@ -46,6 +46,25 @@ def run_checks(dispatch, conn) -> list:
                    "detail": target or "not set (will use hermes send home channel)",
                    "fix": "" if target else "/sieve target <platform[:chat_id]>"})
 
+    # 5. Out-of-band watchdog (catches a link drop while Desktop is closed)
+    import os
+    import subprocess
+    plist = os.path.expanduser("~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist")
+    loaded = False
+    try:
+        subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/com.vgfreak.sieve-watch"],
+                       capture_output=True, timeout=5, check=True)
+        loaded = True
+    except Exception:
+        loaded = False
+    checks.append({
+        "name": "link watchdog (catches a drop while Desktop is closed)",
+        "status": "ok" if loaded else "warn",
+        "detail": "loaded" if loaded else (
+            "not loaded" if os.path.exists(plist) else "plist not installed"),
+        "fix": "" if loaded else "run once in a terminal: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist (the agent cannot). It cannot see an outage while the Mac is asleep.",
+    })
+
     return checks
 
 

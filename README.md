@@ -208,9 +208,20 @@ local IPC to the Tailscale daemon, not an HTTP call from SIEVE. A transition
 from up to down routes `service_down` once. A missing binary, a timeout, and
 the first reading are not an outage. The probe does not run when Desktop is
 closed or the Mac is asleep. `scripts/watch.py` is the path that still runs
-then: launchd starts it every 120 seconds, with no model and no Hermes cron.
-It calls the same route a hook would have called. It does not emit a host
-hook, because a dead gateway has no hook table. A dead gateway cannot ring
+then: it calls the same route a hook would have called, with no model and no
+Hermes cron, so a dead gateway cannot ring the phone but `hermes send` still
+carries the chat chain. **It does not start itself.** A shipped plugin cannot
+register a launchd job, so the watcher is opt-in and unloaded until you load it
+once from a terminal:
+
+```
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist
+```
+
+The plist at `scripts/com.vgfreak.sieve-watch.plist` runs it every 120 seconds.
+An unloaded watcher is why a real Tailscale drop can pass unnoticed. Its own
+limit: `StartInterval` only fires while the Mac is awake, so an outage that
+coincides with the Mac sleeping is still unobserved. A dead gateway cannot ring
 the phone. `hermes send` still carries the chat chain, and it does not need
 the gateway process. A digest uses the global chain, else any per-tier chain
 you named, else telegram. A T4/T5 or a notice uses its per-tier chain first,
