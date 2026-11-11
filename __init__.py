@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from sieve_core import classify, delivery, doctor, escalate, matrix, queue, scheduler  # noqa: E402
+from sieve_core import classify, delivery, doctor, escalate, matrix, queue, scheduler, setup  # noqa: E402
 
 _VERSION = "0.1.0"
 _CTX = None
@@ -592,8 +592,23 @@ def _cmd_inner(conn, sub, rest) -> str:
                 f"{applied['quiet_windows']} window(s), {applied['mutes']} mute(s), "
                 f"{applied['kv']} setting(s). Run /sieve status to confirm.")
 
+    if sub == "setup":
+        try:
+            return setup.handle(conn, rest)
+        except ValueError as exc:
+            return f"setup refused: {exc}"
+
+    if sub == "matrix":
+        if rest and rest[0] == "set":
+            try:
+                return setup.matrix_set(conn, rest[1:])
+            except ValueError as exc:
+                return f"matrix refused: {exc}"
+        return setup.matrix_lines(conn)
+
     return ("commands: status | why | flush | mute | quiet | pause | rules | context | "
-            "simulate | budget | promote | export | import | doctor | test | target")
+            "simulate | budget | promote | export | import | doctor | test | target | "
+            "setup | matrix")
 
 
 # --- registration -----------------------------------------------------------
@@ -671,5 +686,5 @@ def register(ctx):
     # --- commands ----------------------------------------------------------
     ctx.register_command(
         "sieve", _cmd,
-        description="SIEVE notification boundary: status|why|flush|digest|mute|quiet|pause|rules|doctor|test|target|export|import",
+        description="SIEVE notification boundary: status|why|flush|digest|mute|quiet|pause|rules|setup|matrix|doctor|test|target|export|import",
         args_hint="[subcommand] [args]")

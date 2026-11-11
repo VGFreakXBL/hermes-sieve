@@ -20,6 +20,38 @@ def _fresh(monkeypatch, tmp_path):
     return conn
 
 
+def test_setup_walk_and_apply(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    first = plugin._cmd("setup")
+    assert "no matter the hour" in first
+    plugin._cmd("setup needs_human,service_down")
+    plugin._cmd("setup 23:00-08:00")
+    plugin._cmd("setup T5")
+    plugin._cmd("setup discord:#ops")
+    done = plugin._cmd("setup T2")
+    assert "Setup is complete" in done
+    assert queue.kv_get(conn, "target") == "discord:#ops"
+    wins = queue.windows(conn)
+    assert wins and wins[0][4] == 5
+    decision = plugin.matrix.decide("service_down", {"context": "base"}, queue.rules_for(conn, "service_down"))
+    assert decision.tier == 5
+    decision = plugin.matrix.decide("task_done", {"context": "base"}, queue.rules_for(conn, "task_done"))
+    assert decision.tier == 2
+
+
+def test_setup_apply_is_one_shot(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    out = plugin._cmd(
+        "setup apply always=needs_human sleep=22:00-07:00 floor=none digest=slack:C012 daytime=T0")
+    assert "applied" in out
+    assert queue.kv_get(conn, "target") == "slack:C012"
+    assert queue.windows(conn)[0][4] == 6
+    cell = plugin._cmd("matrix set world_message T3 context=meeting")
+    assert "meeting" in cell
+    grid = plugin._cmd("matrix")
+    assert "needs_human: T5" in grid
+
+
 def test_status_and_why(monkeypatch, tmp_path):
     _fresh(monkeypatch, tmp_path)
     assert "SIEVE status" in plugin._cmd("status")
