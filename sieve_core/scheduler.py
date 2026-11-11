@@ -2,7 +2,7 @@
 
 Semantics (locked in the design doc):
 - A quiet window holds every tier BELOW its floor (default floor=T4: T0-T3 held,
-  T4/T5 breach). floor=5 -> sirens only; floor=0 -> nothing held by the window.
+  T4/T5 breach). floor=5 -> T5 only; floor=0 -> nothing held by the window.
 - 'sieve mute <tier> until <when>' holds that tier AND everything below it until
   the deadline (mute T3 = T0-T3). Muting never covers an alarm above the named
   tier, so 'mute T3' cannot silence a T5.

@@ -10,7 +10,7 @@ TIERS = {
     0: "silent (digest only)",
     1: "chip (desktop badge)",
     2: "notify (normal notification)",
-    3: "interrupt (time-sensitive push)",
+    3: "interrupt (sent now, ordinary notification)",
     4: "alarm",
     5: "alarm, top priority (push arm reserved)",
 }
@@ -33,7 +33,7 @@ CONTEXTS = [
 # Seeded defaults (the "matrix starter pack"). User rules override these.
 DEFAULT_RULES = [
     ("needs_human", {}, 4, "needs-human gate -> pleasant alarm (default)"),
-    ("service_down", {}, 5, "watchdog outage -> siren (default)"),
+    ("service_down", {}, 5, "watchdog outage -> T5 top priority (default)"),
     ("task_failed", {}, 2, "failed background run -> notify (default)"),
     ("task_done", {}, 0, "background run finished -> digest (default)"),
     ("cron_done", {}, 0, "cron result -> digest (default)"),

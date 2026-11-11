@@ -211,6 +211,18 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
             else:
                 result = escalate.fire_timer(_dispatch, 60, event_class)
                 achieved = "timer"
+            if not result.get("ok"):
+                # A refused write is not an unverified alarm. Say the push arm
+                # carried it, and keep the requested tier.
+                why = str(result.get("reason") or "phone arm write refused")[:200]
+                queue.kv_set(conn, "escalation_degraded", why)
+                msg = delivery.format_event(
+                    event_class, tier, decision.label, detail,
+                    arm=delivery.arm_label(tier, "push"), degraded=why)
+                sent = delivery.send_chain(msg, targets)
+                return {"event_id": eid, "delivered": sent["delivered"],
+                        "escalated": False, "arm": "push", "verified": False,
+                        "degraded": why, "targets": sent, "tier": tier}
             verified = bool(result.get("verified"))
             arm = delivery.arm_label(tier, achieved)
             if achieved == "alarm":
@@ -225,10 +237,8 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
                 return {"event_id": eid, "delivered": sent["delivered"], "escalated": True,
                         "arm": achieved, "verified": False, "degraded": why,
                         "targets": sent, "tier": tier}
-            if not result.get("ok"):
-                queue.kv_set(conn, "escalation_degraded", str(result.get("reason"))[:200])
             return {"event_id": eid, "delivered": sent["delivered"],
-                    "escalated": result.get("ok"), "arm": achieved, "verified": verified,
+                    "escalated": True, "arm": achieved, "verified": verified,
                     "targets": sent, "tier": tier}
         # Degrade: keep the requested tier as intent, name the arm that carried it.
         queue.kv_set(conn, "escalation_degraded", why)
@@ -354,7 +364,7 @@ def _cmd_inner(conn, sub, rest) -> str:
         spec = rest[0] if rest else "2h"
         until = scheduler.parse_until(spec)
         queue.kv_set(conn, "paused_until", until.isoformat(timespec="seconds"))
-        return f"paused (everything held to digest) until {until:%H:%M}"
+        return f"paused (everything held to digest, including alarms) until {until:%H:%M}"
 
     if sub == "rules":
         if rest and rest[0] == "add":

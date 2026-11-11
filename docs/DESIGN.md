@@ -46,7 +46,7 @@ do not need a phone.
 
 Other setups: SIEVE degrades per profile. No device connection means T4/T5
 stay off and Doctor says which profile is missing the phone, not "push is
-broken." A later option is an attention-home: other profiles forward sirens
+broken." A later option is an attention-home: other profiles forward T4/T5 alarms
 to the one profile that owns the phone, instead of pairing every profile.
 
 Push is a second gate on top of the alarm grant. Grants can be on while
@@ -58,7 +58,7 @@ official iOS beta, but it is legacy Cadu code he plans to clean up. He did
 not give an enable path. The name hermes-mobile-push is from device-access
 source, not public docs, and it is not in the catalog. TestFlight push being
 on does not register the phone. Closed-app wake stays blocked until he names
-the current install. Hackathon demo fallback: film the siren with the Hermes
+the current install. Hackathon demo fallback: film the T5 alarm with the Hermes
 app open, and say closed-app wake is a known beta limit.
 
 Dig (2026-11-09): closed-app wake is NOT possible with current access.
@@ -77,7 +77,7 @@ Follow-up DM (not sent by the agent; CJ sends it):
 >
 > On iOS 1.0.0 (41), TestFlight push is already on, but the app never asks iOS for notification permission, and there is no push control in App Settings or the instance page. hermes-mobile-device-access 1.7.2 only wakes the phone if HERMES_MOBILE_PUSH_RELAY_URL and HERMES_MOBILE_PUSH_INSTALL_KEY are set, and those are empty here.
 >
-> If the current beta can already do that, what should I set on the Mac today, on the default profile? Messy is fine. If the plugin is no longer called hermes-mobile-push, what is it called now? If it cannot work with the app closed yet, I'll film the siren with the app open and mark closed-app wake as a known limit.
+> If the current beta can already do that, what should I set on the Mac today, on the default profile? Messy is fine. If the plugin is no longer called hermes-mobile-push, what is it called now? If it cannot work with the app closed yet, I'll film the T5 alarm with the app open and mark closed-app wake as a known limit.
 
 ### Reserved rung: T5 becomes the push arm when push ships
 

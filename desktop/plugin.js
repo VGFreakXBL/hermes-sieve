@@ -14,7 +14,7 @@ function openPane() {
 }
 
 const POLL = 10000;
-const TIER_LABEL = ["digest", "chip", "notify", "interrupt", "alarm", "siren"];
+const TIER_LABEL = ["digest", "chip", "notify", "interrupt", "alarm", "top"];
 
 function useData(ctx, key, path, interval) {
   return useQuery({
@@ -266,7 +266,7 @@ function MatrixTab({ status, mx, onCell, onSimulate, sim, simBusy, simError, onQ
             children: [
               jsx("span", { key: "l", style: { fontSize: "11px", color: "var(--ui-text-quaternary)" }, children: "Real phone test" }),
               jsx(Button, { key: "t4", onClick: () => onTest(4), children: "Test pleasant alarm" }),
-              jsx(Button, { key: "t5", onClick: () => onTest(5), children: "Test siren" }),
+              jsx(Button, { key: "t5", onClick: () => onTest(5), children: "Test T5" }),
             ],
           }),
           alarm ? jsx("div", {

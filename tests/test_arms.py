@@ -3,7 +3,7 @@
 The tier is the intent the policy chose. The arm is the primitive that actually
 carried it out. A T5 that lands as a messaging push must say both things in the
 same message: it was a max-priority alert, and the arm that delivered it was not
-the siren. Collapsing those two facts is the failure mode this file guards.
+the phone alarm. Collapsing those two facts is the failure mode this file guards.
 """
 
 import importlib.util
@@ -80,6 +80,36 @@ def test_alarm_write_that_cannot_be_read_back_is_flagged(monkeypatch, tmp_path):
     assert out["degraded"].startswith("alarm write unverified")
     assert "[write unverified]" in sent[0]
     assert "max interrupt available" not in sent[0]
+
+
+def test_refused_alarm_write_is_not_labeled_as_an_alarm(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    sent = []
+    monkeypatch.setattr(delivery, "send", lambda text, target=None, timeout=30: sent.append(text) or True)
+    monkeypatch.setattr(plugin.escalate, "push_ready", lambda _d: (True, "device fresh"))
+    monkeypatch.setattr(plugin.escalate, "fire_alarm",
+                        lambda _d, label, at_iso=None, time_hhmm=None, **kw: {
+                            "ok": False, "reason": "alarm write could not be dispatched (no device)"})
+    monkeypatch.setattr(plugin.escalate, "fire_timer",
+                        lambda *a, **k: {"ok": False, "reason": "timer could not be dispatched (no device)"})
+
+    decision = matrix.Decision(tier=5, rule_id="t", label="service down", source="user")
+    out = plugin._deliver(conn, 1, "service_down", {}, decision)
+
+    assert out["tier"] == 5
+    assert out["arm"] == "push"
+    assert out["escalated"] is False
+    assert "phone alarm" not in sent[0]
+    assert "[write unverified]" not in sent[0]
+    assert "max interrupt available" in sent[0]
+    assert "could not be dispatched" in sent[0]
+
+    sent.clear()
+    decision = matrix.Decision(tier=4, rule_id="t", label="gate", source="user")
+    out = plugin._deliver(conn, 2, "needs_human", {}, decision)
+    assert out["arm"] == "push"
+    assert "phone timer" not in sent[0]
+    assert "timer could not be dispatched" in sent[0]
 
 
 def test_arm_label_does_not_upgrade_low_tiers(monkeypatch):
