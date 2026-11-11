@@ -8,13 +8,14 @@ from sieve_core import matrix, queue
 
 CLASSES = [cls for (cls, _match, _tier, _label) in matrix.DEFAULT_RULES]
 
-STEPS = ("always", "sleep", "floor", "digest", "daytime")
+STEPS = ("always", "sleep", "floor", "arm", "digest", "daytime")
 
 QUESTIONS = {
     "always": (
         "Which alerts should reach you no matter the hour? "
         "These become T5, so a quiet window cannot hold them unless its floor is none. "
-        "A ring through Silent only happens when the phone alarm arm is up. "
+        "A ring through Silent only happens when the Hermes iOS app is open and synced to this profile. "
+        "No phone, or the app closed: T5 stays on an in-app desktop toast plus the chat chain, and it does not ring. "
         "A closed app cannot do that. "
         f"Classes: {', '.join(CLASSES)}. "
         "Reply with a comma list, or none."
@@ -25,8 +26,16 @@ QUESTIONS = {
     ),
     "floor": (
         "During that window, what may still break through? "
-        "T4 means alarms still ring. T5 means only the always-list. "
-        "none means silence everything, including alarms."
+        "T4 is a 60-second timer and T5 is an alarm one minute out. They share one tone. "
+        "T4 means those timers still fire. T5 means only the always-list. "
+        "none means silence everything, including alarms. Example: T5."
+    ),
+    "arm": (
+        "Should T4 and T5 try the phone on this machine? "
+        "A ring only lands if the Hermes iOS app is open and synced, and a phone is registered. "
+        "Reply yes or no. Example: no. "
+        "no keeps them on an in-app desktop toast plus the chat chain. "
+        "Run /sieve doctor to see whether hermes send and a synced phone are actually here."
     ),
     "digest": (
         "Where should held digests be delivered? "
@@ -145,10 +154,21 @@ def apply_daytime(conn, raw: str) -> str:
     return f"daytime T{tier}: {shown}"
 
 
+def apply_arm(conn, raw: str) -> str:
+    mode = (raw or "").strip().lower()
+    if mode not in ("yes", "no"):
+        raise ValueError("arm must be yes or no. Example: no")
+    queue.kv_set(conn, "phone_arm", "no" if mode == "no" else "yes")
+    if mode == "no":
+        return "phone arm off. T4/T5 use an in-app desktop toast plus the chat chain. No ring."
+    return "phone arm on. T4/T5 still try the phone, and say so when they cannot."
+
+
 _APPLY = {
     "always": apply_always,
     "sleep": apply_sleep,
     "floor": apply_floor,
+    "arm": apply_arm,
     "digest": apply_digest,
     "daytime": apply_daytime,
 }
@@ -164,7 +184,7 @@ def show() -> str:
     lines = [
         "SIEVE setup. An agent can answer these without opening the pane.",
         "Walk: /sieve setup, then /sieve setup <answer> for each question.",
-        "One shot: /sieve setup apply always=needs_human,service_down sleep=23:00-08:00 floor=T5 digest=telegram daytime=T2",
+        "One shot: /sieve setup apply always=needs_human,service_down sleep=23:00-08:00 floor=T5 arm=no digest=telegram daytime=T2",
         "Any cell: /sieve matrix set world_message T0 context=sleeping",
     ]
     for step in STEPS:
@@ -184,7 +204,7 @@ def handle(conn, rest) -> str:
         return f"[always] {QUESTIONS['always']}"
     if head == "apply":
         if len(rest) < 2:
-            return "usage: /sieve setup apply always=needs_human sleep=23:00-08:00 floor=T5 digest=telegram daytime=T2"
+            return "usage: /sieve setup apply always=needs_human sleep=23:00-08:00 floor=T5 arm=no digest=telegram daytime=T2"
         lines = []
         for tok in rest[1:]:
             if "=" not in tok:

@@ -163,6 +163,11 @@ def main(policy_path=None):
           cmd("test T5"))
     test_out = cmd("test T5")
     check("/sieve test names the blocker", test_out.startswith("push-gate blocked") and "doctor" in test_out, test_out)
+    check("/sieve pause until 8am holds alarms", "pause" in cmd("pause 8am").lower() and bool(queue.kv_get(conn, "paused_until")))
+    cmd("pause off")
+    check("/sieve test T4 names the blocker", cmd("test T4").startswith("push-gate blocked"))
+    run(api.set_config({"active_context": "meeting"}))
+    check("POST /config active_context", queue.kv_get(conn, "active_context") == "meeting")
 
     check("/sieve flush empties holds", isinstance(cmd("flush"), str))
     check("/sieve rules lists", isinstance(cmd("rules"), str))

@@ -27,10 +27,12 @@ def test_setup_walk_and_apply(monkeypatch, tmp_path):
     plugin._cmd("setup needs_human,service_down")
     plugin._cmd("setup 23:00-08:00")
     plugin._cmd("setup T5")
+    plugin._cmd("setup no")
     plugin._cmd("setup discord:#ops")
     done = plugin._cmd("setup T2")
     assert "Setup is complete" in done
     assert queue.kv_get(conn, "target") == "discord:#ops"
+    assert queue.kv_get(conn, "phone_arm") == "no"
     wins = queue.windows(conn)
     assert wins and wins[0][4] == 5
     decision = plugin.matrix.decide("service_down", {"context": "base"}, queue.rules_for(conn, "service_down"))

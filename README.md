@@ -1,6 +1,6 @@
 # SIEVE
 
-A user-owned notification boundary for Hermes Agent: event classes × escalation tiers (T0 silent digest → T5 top-priority alarm, same tone as T4 until the push arm ships) × quiet hours with breach floors. Context-aware via Device Access (location/calendar, grant-gated); escalates through the mobile alarm arm (push-gated opt-in) or a messaging chain.
+A user-owned notification boundary for Hermes Agent: event classes × escalation tiers (T0 silent digest → T5 top-priority alarm) × quiet hours with breach floors. Context slots such as meeting or sleeping are set by you (`/sieve context`), not read from location or calendar. T5 tries a phone alarm only when the Hermes iOS app is open and synced. Otherwise it stays on an in-app desktop toast plus the chat chain you set.
 
 Status: hackathon release candidate for the Hermes Plugin Hackathon. Screenshots are captured separately and are not in this tree yet. What this build does and does not do is listed under [Disclosures](#disclosures).
 
@@ -50,20 +50,14 @@ user, and to be honest about which of those hits actually landed.
 |---|---|---|---|
 | T0 | silent, digest only | none | nothing |
 | T1 | desktop chip, no message | chip | nothing |
-| T2 | one notification | messaging push | a configured delivery target |
-| T3 | interrupt now | messaging push | a configured delivery target |
+| T2 | one notification | messaging push | a delivery target, else telegram |
+| T3 | interrupt now | messaging push | a delivery target, else telegram |
 | T4 | alarm | phone alarm (timer) | phone synced to this profile |
 | T5 | alarm, maximum priority | phone alarm (scheduled) | phone synced to this profile |
 
-**T4 and T5 share the alarm arm today.** The device API takes a label and a time;
-it has no sound, volume, or critical-alert parameter, so both rungs ring with the
-same tone. T5 means top priority in policy, not a louder sound. T5 is the
-reserved rung for a push-based arm: when the app exposes push that reaches a
-closed app or a locked phone, T5 upgrades to it with no policy migration, because
-the tier never changed, only the primitive. Do not describe T5 as a siren: no
-parameter this arm accepts can produce one. A push is still an ordinary
-notification unless it carries a Time Sensitive level or an Apple critical-alert
-entitlement, and the arm label has to say which of those it achieved.
+**T4 is a timer. T5 is an alarm.** T4 calls `mobile_timer_start` for 60 seconds. T5 calls `mobile_alarm_create` one minute out. Neither call accepts a sound, volume, or critical-alert parameter, so the two cannot differ in tone. T5 means top priority in policy, not a louder sound. Closed-app wake is not in this build. Do not describe T5 as a siren.
+
+`/sieve arm no` keeps T4 and T5 on the desktop toast and the chat chain. `/sieve doctor` reports whether `hermes send` and a synced phone are actually present. `/sieve budget N` caps T2 and T3 interrupts per hour. `/sieve promote N` raises a held item one tier after N minutes. A T2 class re-alerts at most once per 6 hours unless you change that limit.
 
 The reserved T5 differentiation is persistence, not loudness: alarm, then a
 bounded number of repeats until it is dismissed, plus an explicit `/sieve ack`.
@@ -215,10 +209,9 @@ then: launchd starts it every 120 seconds, with no model and no Hermes cron.
 It calls the same route a hook would have called. It does not emit a host
 hook, because a dead gateway has no hook table. A dead gateway cannot ring
 the phone. `hermes send` still carries the chat chain, and it does not need
-the gateway process. A digest, a notice, and a
-degraded T4/T5 all use the chain you set (`telegram`, `discord:#ops`,
-`slack:C012`, `photon:...`). If that chain is empty, SIEVE uses any per-tier
-chain you already named, and only then `telegram`. It does not hunt platforms
+the gateway process. A digest uses the global chain, else any per-tier chain
+you named, else telegram. A T4/T5 or a notice uses its per-tier chain first,
+else the global chain, else telegram. It does not hunt platforms
 you did not name. A failed send keeps the hold and `/sieve status` records
 which legs failed. SIEVE does not read `.env`,
 `auth.json`, the credential store, or another profile's data, and it has no

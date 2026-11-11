@@ -1,6 +1,6 @@
 name: sieve
 version: "0.1.0"
-description: SIEVE — a user-owned notification boundary for Hermes Agent. Event classes x escalation tiers x quiet hours, with a Device-Access context brain and a mobile alarm escalation arm.
+description: SIEVE — a user-owned notification boundary. Tiers, quiet hours, and a phone alarm only when the Hermes iOS app is open. No location or calendar read.
 provides_tools:
   - sieve_ping
 provides_hooks:

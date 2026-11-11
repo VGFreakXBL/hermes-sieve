@@ -143,7 +143,7 @@ function MatrixTab({ status, mx, onCell, onSimulate, sim, simBusy, simError, onQ
             key: "acts",
             style: { display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" },
             children: [
-              jsx(Button, { key: "sleep", onClick: () => onQuiet({ start: "23:00", end: "08:00", days: "0123456", floor: 4, label: "sleep" }), children: "Sleep 11pm-8am" }),
+              jsx(Button, { key: "sleep", onClick: () => onQuiet({ start: "23:00", end: "08:00", days: "0123456", floor: 4, label: "sleep" }), children: "Sleep 11pm-8am (T4+ still rings)" }),
               jsx(Button, { key: "snooze", onClick: () => onSnooze("1h"), children: "Pause 1h (holds alarms)" }),
               jsx(Button, { key: "morn", onClick: () => onSnooze("8am"), children: "Pause until 8am (holds alarms)" }),
             ],
@@ -264,8 +264,8 @@ function MatrixTab({ status, mx, onCell, onSimulate, sim, simBusy, simError, onQ
             key: "test",
             style: { display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px", alignItems: "center" },
             children: [
-              jsx("span", { key: "l", style: { fontSize: "11px", color: "var(--ui-text-quaternary)" }, children: "Real phone test" }),
-              jsx(Button, { key: "t4", onClick: () => onTest(4), children: "Test pleasant alarm" }),
+              jsx("span", { key: "l", style: { fontSize: "11px", color: "var(--ui-text-quaternary)" }, children: "Phone write if the app is open. Otherwise this only names the blocker." }),
+              jsx(Button, { key: "t4", onClick: () => onTest(4), children: "Test T4 timer" }),
               jsx(Button, { key: "t5", onClick: () => onTest(5), children: "Test T5" }),
             ],
           }),
