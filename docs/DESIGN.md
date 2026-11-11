@@ -79,6 +79,29 @@ Follow-up DM (not sent by the agent; CJ sends it):
 >
 > If the current beta can already do that, what should I set on the Mac today, on the default profile? Messy is fine. If the plugin is no longer called hermes-mobile-push, what is it called now? If it cannot work with the app closed yet, I'll film the T5 alarm with the app open and mark closed-app wake as a known limit.
 
+### Dig (2026-11-11): push config landed; bridge now requires tz on alarm create
+
+- Configured live: `phone_arm=yes`; per-tier chains `target:T4` and `target:T5`
+  = `telegram:1653516454,photon:any;-;+<home number>`; global target set to
+  explicit `telegram` (identical to the old default, clears the doctor warn).
+  Both chain legs live-tested through `hermes send` (both delivered). T5 arm
+  test: create accepted and read back as scheduled before fire time (verified).
+- The bridge now rejects a naive `at` ("Use an ISO 8601 date with timezone
+  for at."). This silently broke BOTH the `/sieve test T5` ritual and the live
+  T5 escalation path (both build `datetime.now() + 1min` naive). Fixed at the
+  choke point in `escalate.fire_alarm`: naive ISO is normalized to local-tz
+  before dispatch. 123 tests pass; `hermes plugins validate .` clean.
+- Idempotency keys bind to the exact payload: retrying a rejected create with
+  the same key but a corrected `at` fails "Idempotency key already belongs to
+  a different action" — a validation-rejected attempt still consumes the key.
+  Same key only for an identical retry; a corrected payload is a new action.
+- Console and tool output mask E.164 numbers (`+160****4803`); the STORE holds
+  the full number. Verify stored values with boolean probes (substring/length),
+  never by eyeballing the echoed value.
+- Closed-app wake unchanged: still no push registration enable path (no relay
+  secrets, no catalog plugin). T4/T5 ring while the Hermes app is open; writes
+  queue while it is closed.
+
 ### Reserved rung: T5 becomes the push arm when push ships
 
 T5 stays in the vocabulary and keeps its policy meaning (**top priority**). It

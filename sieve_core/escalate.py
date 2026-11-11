@@ -86,7 +86,19 @@ def fire_alarm(dispatch, label: str, at_iso: str = None, time_hhmm: str = None,
     key = idempotency_key or f"sieve-{uuid.uuid4()}"
     args = {"idempotency_key": key, "label": T4_LABEL.format(label=label)[:100]}
     if at_iso:
-        args["at"] = at_iso
+        # The device bridge requires ISO 8601 WITH a timezone; callers pass
+        # naive local time (datetime.now() + delta), which the bridge rejects
+        # with "Use an ISO 8601 date with timezone for at." Normalize here so
+        # every caller (the live T5 path and /sieve test alike) is covered.
+        ts = str(at_iso)
+        try:
+            from datetime import datetime as _dt
+            parsed = _dt.fromisoformat(ts)
+            if parsed.tzinfo is None:
+                ts = parsed.astimezone().isoformat(timespec="seconds")
+        except Exception:
+            pass
+        args["at"] = ts
     elif time_hhmm:
         args["time"] = time_hhmm
     else:
