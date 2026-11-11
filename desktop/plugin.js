@@ -264,7 +264,7 @@ function MatrixTab({ status, mx, onCell, onSimulate, sim, simBusy, simError, onQ
             key: "test",
             style: { display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px", alignItems: "center" },
             children: [
-              jsx("span", { key: "l", style: { fontSize: "11px", color: "var(--ui-text-quaternary)" }, children: "Phone write if the app is open. Otherwise this only names the blocker." }),
+              jsx("span", { key: "l", style: { fontSize: "11px", color: "var(--ui-text-quaternary)" }, children: "This pane cannot write the phone. Desktop chat may refuse /sieve with permission_denied. Run /sieve doctor in Discord or Telegram." }),
               jsx(Button, { key: "t4", onClick: () => onTest(4), children: "Test T4 timer" }),
               jsx(Button, { key: "t5", onClick: () => onTest(5), children: "Test T5" }),
             ],
@@ -273,6 +273,11 @@ function MatrixTab({ status, mx, onCell, onSimulate, sim, simBusy, simError, onQ
             key: "alarm",
             style: { marginTop: "8px", fontSize: "12px", color: "var(--ui-text-primary)", overflowWrap: "anywhere" },
             children: alarm,
+          }) : null,
+          status && status.last_phone_check ? jsx("div", {
+            key: "last",
+            style: { marginTop: "8px", fontSize: "12px", color: "var(--ui-text-secondary)", overflowWrap: "anywhere" },
+            children: `Last check from a messaging session: ${status.last_phone_check}`,
           }) : null,
         ],
       }),
@@ -432,7 +437,7 @@ function Pane({ ctx }) {
   const onRemoveQuiet = (id) => ctx.rest("/quiet/remove", { method: "POST", body: { id } }).then(invalidate);
   const onSnooze = (until) => ctx.rest("/cmd", { method: "POST", body: { args: `pause ${until}` } }).then(invalidate);
   const onTest = (tier) => {
-    setAlarm("Sending test to the phone...");
+    setAlarm("Checking from this pane. This cannot write the phone.");
     ctx.rest("/cmd", { method: "POST", body: { args: `test T${tier}` } })
       .then((r) => setAlarm((r && (r.result || r.text)) || JSON.stringify(r)))
       .catch((err) => setAlarm(String(err && err.message ? err.message : err)));

@@ -43,6 +43,7 @@ async def status():
         "last_delivery": queue.kv_get(conn, "last_delivery") or "",
         "desktop_notice": queue.kv_get(conn, "desktop_notice") or "",
         "phone_arm": queue.kv_get(conn, "phone_arm") or "yes",
+        "last_phone_check": queue.kv_get(conn, "last_phone_check") or "",
         "target": queue.kv_get(conn, "target") or "telegram",
         "windows": wins,
         "mutes": mutes,
@@ -78,7 +79,7 @@ async def doctor_lite():
             {"name": "delivery target", "ok": bool(queue.kv_get(conn, "target")),
              "detail": queue.kv_get(conn, "target") or "not set"},
         ],
-        "note": "device checks (grants, push) need the agent turn: run /sieve doctor in chat",
+        "note": "This pane cannot see the phone. Desktop chat may refuse /sieve with permission_denied. Run /sieve doctor in Discord or Telegram. That result is kept and shown on the Matrix tab.",
     }
 
 

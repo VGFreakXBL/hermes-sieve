@@ -102,6 +102,20 @@ def test_rules_add_and_list(monkeypatch, tmp_path):
     assert "world_message T5 user" in plugin._cmd("rules")
 
 
+def test_phone_check_stamps_only_with_context(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    plugin._CTX = None
+    assert plugin._stamp_phone_check(conn, "blocked") == "blocked"
+    assert not queue.kv_get(conn, "last_phone_check")
+    plugin._CTX = object()
+    try:
+        stamped = plugin._stamp_phone_check(conn, "ok")
+        assert "ran on" in stamped
+        assert queue.kv_get(conn, "last_phone_check")
+    finally:
+        plugin._CTX = None
+
+
 def test_target_set(monkeypatch, tmp_path):
     conn = _fresh(monkeypatch, tmp_path)
     assert "discord" in plugin._cmd("target discord:#digests")

@@ -351,6 +351,35 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
     return {"event_id": eid, "delivered": True, "chip": True, "tier": tier}
 
 
+def _surface() -> str:
+    try:
+        from gateway.session_context import get_session_env
+        return (get_session_env("HERMES_SESSION_PLATFORM")
+                or get_session_env("HERMES_PLATFORM")
+                or get_session_env("HERMES_SESSION_SOURCE")
+                or "messaging")
+    except Exception:
+        return "unknown"
+
+
+def _stamp_phone_check(conn, text: str) -> str:
+    """Remember a phone check that actually ran, so the Desktop pane can show it later.
+
+    The pane and a refused Desktop slash command never reach this. Only a handler
+    with a plugin context (Discord, Telegram) stamps the result.
+    """
+    if _CTX is None:
+        return text
+    rec = {
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "surface": _surface(),
+        "text": text[:400],
+    }
+    queue.kv_set(conn, "last_phone_check", json.dumps(rec))
+    return (text + f"\n[ran on {rec['surface']}. The Desktop pane cannot repeat a phone write. "
+            "Desktop chat may refuse /sieve with permission_denied. This result stays on the pane.]")
+
+
 def _dispatch(tool: str, args: dict):
     if _CTX is None:
         raise RuntimeError("ctx unavailable")
@@ -497,14 +526,15 @@ def _cmd_inner(conn, sub, rest) -> str:
 
     if sub == "doctor":
         checks = doctor.run_checks(_dispatch, conn)
-        return doctor.format_checks(checks)
+        return _stamp_phone_check(conn, doctor.format_checks(checks))
 
     if sub == "test":
         # /sieve test T4 | T5  (the first-enable ritual)
         tier = int(rest[0].lower().lstrip("t")) if rest else 4
         ready, why = escalate.push_ready(_dispatch)
         if not ready:
-            return f"push-gate blocked: {why}. Run /sieve doctor for the fix path."
+            blocked = f"push-gate blocked: {why}. Run /sieve doctor in Discord or Telegram, not in the Desktop pane or Desktop chat."
+            return _stamp_phone_check(conn, blocked)
         key = f"sieve-test-{int(datetime.now().timestamp())}"
         if tier >= 5:
             at = (datetime.now() + timedelta(minutes=1)).isoformat(timespec="seconds")
@@ -517,7 +547,7 @@ def _cmd_inner(conn, sub, rest) -> str:
         out = f"test T{tier}: {verdict}"
         if "verified" in result:
             out += f" (read-back {'verified' if result.get('verified') else 'UNVERIFIED'})"
-        return out
+        return _stamp_phone_check(conn, out)
 
     if sub == "target":
         # /sieve target                          -> show global + per-tier chains

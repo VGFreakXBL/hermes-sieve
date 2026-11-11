@@ -183,7 +183,10 @@ timer back. A refused timer write takes the same degrade path.
 no sync in 24 hours: the alert is not dropped. The requested tier stays as it is,
 the message names the arm that actually ran (`messaging push — max interrupt
 available`), carries `[escalation degraded: <reason>]`, and the reason is written
-to state. The result reports `verified: false`.
+to state. The result reports `verified: false`. The Desktop pane cannot run this
+check. Desktop chat may refuse `/sieve` with `permission_denied` before the plugin
+starts. A Discord or Telegram `/sieve doctor` is the check that can see the phone,
+and that result is kept for the pane.
 
 **Same tone, and no closed-app wake.** The device API accepts a label and a time;
 it has no sound, volume, or critical-alert parameter, so T4 and T5 ring
