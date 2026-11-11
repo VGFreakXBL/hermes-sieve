@@ -210,7 +210,12 @@ the platform credentials and the network call. The desktop status poll and
 local IPC to the Tailscale daemon, not an HTTP call from SIEVE. A transition
 from up to down routes `service_down` once. A missing binary, a timeout, and
 the first reading are not an outage. The probe does not run when Desktop is
-closed or the Mac is asleep. A digest, a notice, and a
+closed or the Mac is asleep. `scripts/watch.py` is the path that still runs
+then: launchd starts it every 120 seconds, with no model and no Hermes cron.
+It calls the same route a hook would have called. It does not emit a host
+hook, because a dead gateway has no hook table. A dead gateway cannot ring
+the phone. `hermes send` still carries the chat chain, and it does not need
+the gateway process. A digest, a notice, and a
 degraded T4/T5 all use the chain you set (`telegram`, `discord:#ops`,
 `slack:C012`, `photon:...`). If that chain is empty, SIEVE uses any per-tier
 chain you already named, and only then `telegram`. It does not hunt platforms

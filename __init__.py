@@ -392,6 +392,9 @@ def _cmd_inner(conn, sub, rest) -> str:
         ts = queue.kv_get(conn, "tailscale_up")
         if ts:
             lines.append(f"tailscale: {ts} ({queue.kv_get(conn, 'tailscale_detail') or 'no detail'})")
+        gw = queue.kv_get(conn, "gateway_up")
+        if gw:
+            lines.append(f"gateway: {gw} ({queue.kv_get(conn, 'gateway_detail') or 'no detail'})")
         return "\n".join(lines)
 
     if sub == "why":

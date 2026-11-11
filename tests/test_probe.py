@@ -63,6 +63,29 @@ def test_interval_skips_without_force():
     assert calls == []
 
 
+def test_gateway_death_routes_once(tmp_path):
+    conn = _conn()
+    queue.kv_set(conn, "gateway_up", "yes")
+    fired = []
+    out = probe.observe_gateway(conn, lambda *a, **k: fired.append(a[0]), home=tmp_path,
+                                pid_alive=lambda _pid: False, force=True)
+    assert out["fired"] is True
+    assert fired == ["service_down"]
+    again = probe.observe_gateway(conn, lambda *a, **k: fired.append("again"), home=tmp_path,
+                                  pid_alive=lambda _pid: False, force=True)
+    assert again["fired"] is False
+
+
+def test_gateway_first_down_does_not_fire(tmp_path):
+    conn = _conn()
+    (tmp_path / "gateway.pid").write_text('{"pid": 1}', encoding="utf-8")
+    fired = []
+    out = probe.observe_gateway(conn, lambda *a, **k: fired.append(1), home=tmp_path,
+                                pid_alive=lambda _pid: False, force=True)
+    assert fired == []
+    assert out["up"] is False
+
+
 def test_timeout_does_not_flip_state():
     conn = _conn()
     queue.kv_set(conn, "tailscale_up", "yes")

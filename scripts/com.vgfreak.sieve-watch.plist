@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vgfreak.sieve-watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/alexwilson/.hermes/hermes-agent/venv/bin/python</string>
+    <string>/Users/alexwilson/.hermes/plugins/sieve/scripts/watch.py</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/alexwilson/.hermes/logs/sieve-watch.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/alexwilson/.hermes/logs/sieve-watch.err</string>
+</dict>
+</plist>
