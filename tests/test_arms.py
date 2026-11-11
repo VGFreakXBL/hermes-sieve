@@ -77,7 +77,7 @@ def test_alarm_write_that_cannot_be_read_back_is_flagged(monkeypatch, tmp_path):
 
     assert out["arm"] == "alarm"
     assert out["verified"] is False
-    assert out["degraded"].startswith("alarm write unverified")
+    assert out["degraded"].startswith("alarm write accepted, read-back missed")
     assert "[write unverified]" in sent[0]
     assert "max interrupt available" not in sent[0]
 

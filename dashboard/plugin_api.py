@@ -36,6 +36,7 @@ async def status():
         "held": queue.held_count(conn),
         "paused_until": queue.kv_get(conn, "paused_until") or "",
         "degraded": queue.kv_get(conn, "escalation_degraded") or "",
+        "last_delivery": queue.kv_get(conn, "last_delivery") or "",
         "target": queue.kv_get(conn, "target") or "telegram",
         "windows": wins,
         "mutes": mutes,
@@ -187,6 +188,12 @@ async def get_config():
 async def set_config(body: dict):
     conn = queue.db()
     for k in ("budget_per_hour", "promo_minutes", "active_context", "target"):
-        if k in body:
-            queue.kv_set(conn, k, body[k])
+        if k not in body:
+            continue
+        value = body[k]
+        if k in ("budget_per_hour", "promo_minutes"):
+            raw = str(value).strip()
+            if raw and not raw.isdigit():
+                return {"ok": False, "error": f"{k} must be a whole number"}
+        queue.kv_set(conn, k, value)
     return {"ok": True}

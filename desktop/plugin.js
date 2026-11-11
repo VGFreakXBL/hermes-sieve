@@ -144,8 +144,8 @@ function MatrixTab({ status, mx, onCell, onSimulate, sim, simBusy, simError, onQ
             style: { display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" },
             children: [
               jsx(Button, { key: "sleep", onClick: () => onQuiet({ start: "23:00", end: "08:00", days: "0123456", floor: 4, label: "sleep" }), children: "Sleep 11pm-8am" }),
-              jsx(Button, { key: "snooze", onClick: () => onSnooze("1h"), children: "Snooze 1h" }),
-              jsx(Button, { key: "morn", onClick: () => onSnooze("8am"), children: "Snooze until 8am" }),
+              jsx(Button, { key: "snooze", onClick: () => onSnooze("1h"), children: "Pause 1h (holds alarms)" }),
+              jsx(Button, { key: "morn", onClick: () => onSnooze("8am"), children: "Pause until 8am (holds alarms)" }),
             ],
           }),
           (status.windows || []).length
@@ -457,7 +457,7 @@ function Pane({ ctx }) {
           jsx(Button, {
             key: "snooze",
             onClick: () => ctx.rest("/cmd", { method: "POST", body: { args: "pause 1h" } }).then(invalidate),
-            children: "Snooze 1h",
+            children: "Pause 1h (holds alarms)",
           }),
           jsx(Button, {
             key: "flush",

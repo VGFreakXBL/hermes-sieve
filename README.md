@@ -205,7 +205,12 @@ module load and never called.)
 
 **Network, shell, files.** SIEVE makes no HTTP requests of its own. Delivery
 shells out to the local `hermes send` CLI via `subprocess.run`; that CLI carries
-the platform credentials and the network call. SIEVE does not read `.env`,
+the platform credentials and the network call. A digest, a notice, and a
+degraded T4/T5 all use the chain you set (`telegram`, `discord:#ops`,
+`slack:C012`, `photon:...`). If that chain is empty, SIEVE uses any per-tier
+chain you already named, and only then `telegram`. It does not hunt platforms
+you did not name. A failed send keeps the hold and `/sieve status` records
+which legs failed. SIEVE does not read `.env`,
 `auth.json`, the credential store, or another profile's data, and it has no
 `os.environ` access. The files it writes are the SQLite database above, a policy
 file when you run `/sieve export`, and a local observe-only hook log at

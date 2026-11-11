@@ -86,7 +86,7 @@ def arm_label(tier: int, achieved: str, why: "str | None" = None) -> str:
     if achieved == "alarm":
         return "phone alarm (rings through Silent + Focus)"
     if achieved == "timer":
-        return "phone timer chime (rings through Silent + Focus)"
+        return "phone timer chime (accepted, not read back)"
     if achieved == "push":
         if tier >= 4:
             return "messaging push — max interrupt available (alarm arm unavailable)"

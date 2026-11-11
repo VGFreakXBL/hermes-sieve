@@ -22,6 +22,54 @@ _VERSION = "0.1.0"
 _CTX = None
 DEFAULT_TARGET = "telegram"
 
+
+def _safe_int(raw, default=0) -> int:
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _landed(result: dict) -> bool:
+    """True when a person was reached, or a phone write was accepted.
+
+    Messaging success counts. An accepted alarm or timer also counts, so a
+    dead chat pipe cannot make the next sweep ring the phone again.
+    """
+    if not result:
+        return False
+    if result.get("delivered"):
+        return True
+    return result.get("arm") in ("alarm", "timer") and result.get("escalated") is True
+
+
+def _record_delivery(conn, sent: dict, what: str) -> None:
+    rec = {
+        "what": what,
+        "ok": list(sent.get("ok") or []),
+        "failed": list(sent.get("failed") or []),
+        "delivered": bool(sent.get("delivered")),
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    queue.kv_set(conn, "last_delivery", json.dumps(rec)[:500])
+
+
+def _digest_targets(conn) -> list:
+    """Global chain, else any tier chain the user actually set, else telegram.
+
+    A Discord-only or iMessage-only setup must not have its digest silently
+    rewritten onto telegram. The telegram rung is only the empty-store default.
+    """
+    chain = delivery.parse_chain(queue.kv_get(conn, "target") or "")
+    if chain:
+        return chain
+    named = []
+    for tier in range(6):
+        for leg in delivery.parse_chain(queue.kv_get(conn, f"target:T{tier}") or ""):
+            if leg not in named:
+                named.append(leg)
+    return named or [DEFAULT_TARGET]
+
 # --- seam-recon spikes (log-only observers; Task 1.2, retained) -----------
 _SPIKE_LOG = _ROOT / "docs" / "spike-events.jsonl"
 _REDACT_KEYS = {"command", "prompt", "password", "answer", "content", "text"}
@@ -53,31 +101,33 @@ def _make_spiker(event):
 
 def _promote_sweep(conn) -> int:
     """Promotion ladder: held items older than promo_minutes escalate one tier."""
-    promo = int(queue.kv_get(conn, "promo_minutes") or 0)
+    promo = _safe_int(queue.kv_get(conn, "promo_minutes") or 0)
     if not promo:
+        return 0
+    backoff = queue.kv_get(conn, "promo_backoff_until") or ""
+    if backoff > datetime.now().isoformat(timespec="seconds"):
         return 0
     cutoff = (datetime.now() - timedelta(minutes=promo)).isoformat(timespec="seconds")
     rows = queue.stale_holds(conn, cutoff)
     n = 0
     for (hold_id, eid, tier, event_class) in rows:
         new_tier = min(tier + 1, 5)
-        # The ladder exists to defeat inattention, not the user's stated silence.
-        # If the next rung would still be held (pause, mute, quiet floor), leave
-        # the item alone: escalating it here would ring at 2am during a paused or
-        # silenced window, which is the one thing the boundary must never do.
         still_held, _why = scheduler.is_held(
             new_tier, queue.windows(conn), queue.active_mutes(conn, queue.now_iso()),
             queue.kv_get(conn, "paused_until"))
         if still_held:
             continue
-        queue.release_one(conn, hold_id)
         decision = matrix.Decision(tier=new_tier, rule_id=f"promoted:{eid}",
                                    label=f"promotion ladder: held {promo}m, escalated T{tier}->T{new_tier}",
                                    source="user")
-        queue.log_event(conn, event_class, {"promoted_from": eid}, new_tier, "delivered",
-                        decision.rule_id, detail=decision.label)
-        _deliver(conn, eid, event_class, {}, decision, detail=f"was held since {cutoff}")
-        n += 1
+        result = _deliver(conn, eid, event_class, {}, decision, detail=f"was held since {cutoff}")
+        if _landed(result):
+            queue.release_one(conn, hold_id)
+            n += 1
+            continue
+        queue.kv_set(conn, "promo_backoff_until",
+                     (datetime.now() + timedelta(minutes=promo)).isoformat(timespec="seconds"))
+        break
     return n
 
 
@@ -89,7 +139,10 @@ def _maybe_digest(conn, now=None) -> str:
     schedules a digest, so without this held items only resurface when the user
     happens to run /sieve flush.
     """
-    hours = float(queue.kv_get(conn, "digest_every_hours") or 8)
+    try:
+        hours = float(queue.kv_get(conn, "digest_every_hours") or 8)
+    except (TypeError, ValueError):
+        hours = 8.0
     if hours <= 0:
         return ""
     rows = queue.held_events(conn)
@@ -103,10 +156,15 @@ def _maybe_digest(conn, now=None) -> str:
                 return ""
         except Exception:
             pass
-    target = queue.kv_get(conn, "target") or DEFAULT_TARGET
-    delivery.send_chain(delivery.format_digest(rows), _targets_for(conn, 0))
+    text = delivery.format_digest(rows)
+    sent = delivery.send_chain(text, _digest_targets(conn))
+    _record_delivery(conn, sent, "digest")
+    if not sent.get("delivered"):
+        failed = ", ".join(sent.get("failed") or ["no target"])
+        return f"digest failed: {len(rows)} held item(s) kept | failed: {failed}"
     queue.release_all(conn)
     queue.kv_set(conn, "last_digest_at", now.isoformat(timespec="seconds"))
+    queue.kv_set(conn, "escalation_degraded", "")
     return f"digest sent: {len(rows)} held item(s)"
 
 
@@ -148,7 +206,7 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
         # attention budget: cap interrupts per rolling hour; overflow auto-holds.
         # Applies to chatter only (T2/T3). An alarm or gate is not chatter: a
         # budget that swallows a T4 defeats the reason the tier exists.
-        budget = int(queue.kv_get(conn, "budget_per_hour") or 0)
+        budget = _safe_int(queue.kv_get(conn, "budget_per_hour") or 0)
         if not held and budget and 2 <= decision.tier <= 3:
             since = (now - timedelta(hours=1)).isoformat(timespec="seconds")
             if queue.recent_deliveries(conn, since) >= budget:
@@ -176,10 +234,13 @@ def _route(event_class: str, payload: dict, detail: str = "") -> dict:
             return {"event_id": eid, "held": True, "reason": reason, "tier": decision.tier}
 
         result = _deliver(conn, eid, event_class, payload, decision, detail)
-        if result.get("delivered") is False:
+        if not _landed(result):
             queue.set_event_outcome(
                 conn, eid, "failed",
                 f"{detail} | delivery failed on every target".strip(" |"))
+            queue.add_hold(conn, eid)
+            result = dict(result)
+            result["held"] = True
         return result
     except Exception as exc:
         return {"error": str(exc)[:200]}
@@ -206,20 +267,23 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
         if ready:
             if tier == 5:
                 at = (datetime.now() + timedelta(minutes=1)).isoformat(timespec="seconds")
-                result = escalate.fire_alarm(_dispatch, event_class, at_iso=at)
+                result = escalate.fire_alarm(
+                    _dispatch, event_class, at_iso=at,
+                    idempotency_key=f"sieve-{eid}-alarm")
                 achieved = "alarm"
             else:
-                result = escalate.fire_timer(_dispatch, 60, event_class)
+                result = escalate.fire_timer(
+                    _dispatch, 60, event_class,
+                    idempotency_key=f"sieve-{eid}-timer")
                 achieved = "timer"
             if not result.get("ok"):
-                # A refused write is not an unverified alarm. Say the push arm
-                # carried it, and keep the requested tier.
                 why = str(result.get("reason") or "phone arm write refused")[:200]
                 queue.kv_set(conn, "escalation_degraded", why)
                 msg = delivery.format_event(
                     event_class, tier, decision.label, detail,
                     arm=delivery.arm_label(tier, "push"), degraded=why)
                 sent = delivery.send_chain(msg, targets)
+                _record_delivery(conn, sent, f"T{tier}")
                 return {"event_id": eid, "delivered": sent["delivered"],
                         "escalated": False, "arm": "push", "verified": False,
                         "degraded": why, "targets": sent, "tier": tier}
@@ -229,28 +293,30 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
                 arm += " [verified]" if verified else " [write unverified]"
             sent = delivery.send_chain(
                 delivery.format_event(event_class, tier, decision.label, detail, arm=arm), targets)
-            if result.get("ok") and not verified:
-                # Write accepted but not readable back: the phone has not synced.
-                # The message still went out, so nothing is lost; record the truth.
-                why = "alarm write unverified (phone not synced; open the Hermes app)"
+            _record_delivery(conn, sent, f"T{tier}")
+            if achieved == "alarm" and not verified:
+                why = str(result.get("reason") or "alarm write accepted, read-back missed")[:200]
                 queue.kv_set(conn, "escalation_degraded", why)
                 return {"event_id": eid, "delivered": sent["delivered"], "escalated": True,
                         "arm": achieved, "verified": False, "degraded": why,
                         "targets": sent, "tier": tier}
+            if verified or sent.get("delivered"):
+                queue.kv_set(conn, "escalation_degraded", "")
             return {"event_id": eid, "delivered": sent["delivered"],
                     "escalated": True, "arm": achieved, "verified": verified,
                     "targets": sent, "tier": tier}
-        # Degrade: keep the requested tier as intent, name the arm that carried it.
         queue.kv_set(conn, "escalation_degraded", why)
         msg = delivery.format_event(event_class, tier, decision.label, detail,
                                     arm=delivery.arm_label(tier, "push"), degraded=why)
         sent = delivery.send_chain(msg, targets)
+        _record_delivery(conn, sent, f"T{tier}")
         return {"event_id": eid, "delivered": sent["delivered"], "arm": "push",
                 "degraded": why, "targets": sent, "tier": tier}
     if tier >= 2:
         arm = delivery.arm_label(tier, "push")
         sent = delivery.send_chain(
             delivery.format_event(event_class, tier, decision.label, detail, arm=arm), targets)
+        _record_delivery(conn, sent, f"T{tier}")
         return {"event_id": eid, "delivered": sent["delivered"], "arm": "push",
                 "targets": sent, "tier": tier}
     # tier 1: chip only (desktop chip reads held/recent counts)
@@ -292,6 +358,9 @@ def _cmd_inner(conn, sub, rest) -> str:
             lines.append(f"  quiet {s}-{e} days[{days}] floor=T{floor} {label}")
         if degraded:
             lines.append(f"! escalation arm degraded: {degraded}")
+        last = queue.kv_get(conn, "last_delivery")
+        if last:
+            lines.append(f"last delivery: {last}")
         return "\n".join(lines)
 
     if sub == "why":
@@ -323,10 +392,15 @@ def _cmd_inner(conn, sub, rest) -> str:
 
     if sub == "flush":
         rows = queue.held_events(conn)
+        if not rows:
+            return "flushed 0 held item(s)"
+        sent = delivery.send_chain(delivery.format_digest(rows), _digest_targets(conn))
+        _record_delivery(conn, sent, "flush")
+        if not sent.get("delivered"):
+            failed = ", ".join(sent.get("failed") or ["no target"])
+            return f"flush failed: {len(rows)} held item(s) kept | failed: {failed}"
         n = queue.release_all(conn)
-        if rows:
-            target = queue.kv_get(conn, "target") or DEFAULT_TARGET
-            delivery.send(delivery.format_digest(rows), target)
+        queue.kv_set(conn, "escalation_degraded", "")
         return f"flushed {n} held item(s)"
 
     if sub == "mute":

@@ -248,6 +248,57 @@ def test_digest_off_leaves_items_held(monkeypatch, tmp_path):
     assert queue.held_count(conn) == 1
 
 
+def test_digest_keeps_holds_when_every_leg_fails(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    queue.kv_set(conn, "target", "discord:#ops")
+    seen = []
+    monkeypatch.setattr(plugin.delivery, "send",
+                        lambda text, target=None, timeout=30: seen.append(target) or False)
+    eid = queue.log_event(conn, "task_done", {}, 0, "held")
+    queue.add_hold(conn, eid)
+    out = plugin._maybe_digest(conn)
+    assert out.startswith("digest failed"), out
+    assert seen == ["discord:#ops"]
+    assert queue.held_count(conn) == 1
+    assert not queue.kv_get(conn, "last_digest_at")
+
+
+def test_flush_keeps_holds_when_send_fails(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    queue.kv_set(conn, "target", "slack:C012")
+    eid = queue.log_event(conn, "cron_done", {}, 0, "held")
+    queue.add_hold(conn, eid)
+    monkeypatch.setattr(plugin.delivery, "send", lambda *a, **k: False)
+    out = plugin._cmd("flush")
+    assert "flush failed" in out
+    assert queue.held_count(conn) == 1
+
+
+def test_digest_uses_named_tier_chain_not_telegram(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    queue.kv_set(conn, "target:T5", "photon:+15555550100")
+    seen = []
+    monkeypatch.setattr(plugin.delivery, "send",
+                        lambda text, target=None, timeout=30: seen.append(target) or True)
+    eid = queue.log_event(conn, "task_done", {}, 0, "held")
+    queue.add_hold(conn, eid)
+    assert plugin._maybe_digest(conn).startswith("digest sent")
+    assert seen == ["photon:+15555550100"]
+
+
+def test_successful_timer_does_not_claim_phone_unsynced(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    monkeypatch.setattr(plugin.delivery, "send", lambda *a, **k: True)
+    monkeypatch.setattr(plugin.escalate, "push_ready", lambda _d: (True, "device fresh"))
+    monkeypatch.setattr(plugin.escalate, "fire_timer",
+                        lambda *a, **k: {"ok": True, "result": "accepted"})
+    decision = matrix.Decision(tier=4, rule_id="t", label="gate", source="user")
+    out = plugin._deliver(conn, 7, "needs_human", {}, decision)
+    assert out["arm"] == "timer"
+    assert "degraded" not in out
+    assert not queue.kv_get(conn, "escalation_degraded")
+
+
 def test_digest_noop_when_nothing_held(monkeypatch, tmp_path):
     conn = _fresh(monkeypatch, tmp_path)
     monkeypatch.setattr(plugin.delivery, "send", lambda *a, **k: True)
