@@ -57,7 +57,10 @@ def push_ready(dispatch) -> tuple:
     """(ready, reason). Ready = device toolset answers AND a device has been seen recently."""
     status = device_status(dispatch)
     if not status["available"]:
-        return False, "device toolset unavailable (mobile_device not loaded)"
+        # Name the real reason, not a canned one: "device toolset unavailable"
+        # and "no tool context" are different failures and the message must not
+        # merge them. The pane has no device toolset in its context at all.
+        return False, status.get("reason") or "device toolset unavailable"
     if not status["devices"]:
         return False, "no device registered (open the Hermes app on your phone)"
     import time
