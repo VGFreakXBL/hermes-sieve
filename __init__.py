@@ -54,6 +54,20 @@ def _record_delivery(conn, sent: dict, what: str) -> None:
     queue.kv_set(conn, "last_delivery", json.dumps(rec)[:500])
 
 
+def _phone_wanted(conn) -> bool:
+    return (queue.kv_get(conn, "phone_arm") or "yes") != "no"
+
+
+def _desktop_notice(conn, tier: int, title: str, body: str) -> None:
+    rec = {
+        "id": datetime.now().isoformat(timespec="seconds"),
+        "tier": int(tier),
+        "title": title[:80],
+        "body": body[:240],
+    }
+    queue.kv_set(conn, "desktop_notice", json.dumps(rec))
+
+
 def _digest_targets(conn) -> list:
     """Global chain, else any tier chain the user actually set, else telegram.
 
@@ -262,6 +276,18 @@ def _targets_for(conn, tier):
 def _deliver(conn, eid, event_class, payload, decision, detail=""):
     targets = _targets_for(conn, decision.tier)
     tier = decision.tier
+    if tier >= 4 and not _phone_wanted(conn):
+        why = "no phone arm configured (desktop and chat only)"
+        queue.kv_set(conn, "escalation_degraded", why)
+        msg = delivery.format_event(
+            event_class, tier, decision.label, detail,
+            arm="desktop toast (in-app; no phone)", degraded=why)
+        sent = delivery.send_chain(msg, targets)
+        _record_delivery(conn, sent, f"T{tier}")
+        _desktop_notice(conn, tier, f"SIEVE T{tier}", msg)
+        return {"event_id": eid, "delivered": sent["delivered"],
+                "escalated": False, "arm": "desktop", "verified": False,
+                "degraded": why, "targets": sent, "tier": tier}
     if tier >= 4:
         ready, why = escalate.push_ready(_dispatch)
         if ready:
@@ -284,6 +310,7 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
                     arm=delivery.arm_label(tier, "push"), degraded=why)
                 sent = delivery.send_chain(msg, targets)
                 _record_delivery(conn, sent, f"T{tier}")
+                _desktop_notice(conn, tier, f"SIEVE T{tier}", msg)
                 return {"event_id": eid, "delivered": sent["delivered"],
                         "escalated": False, "arm": "push", "verified": False,
                         "degraded": why, "targets": sent, "tier": tier}
@@ -310,6 +337,7 @@ def _deliver(conn, eid, event_class, payload, decision, detail=""):
                                     arm=delivery.arm_label(tier, "push"), degraded=why)
         sent = delivery.send_chain(msg, targets)
         _record_delivery(conn, sent, f"T{tier}")
+        _desktop_notice(conn, tier, f"SIEVE T{tier}", msg)
         return {"event_id": eid, "delivered": sent["delivered"], "arm": "push",
                 "degraded": why, "targets": sent, "tier": tier}
     if tier >= 2:
@@ -592,6 +620,28 @@ def _cmd_inner(conn, sub, rest) -> str:
                 f"{applied['quiet_windows']} window(s), {applied['mutes']} mute(s), "
                 f"{applied['kv']} setting(s). Run /sieve status to confirm.")
 
+    if sub == "fire":
+        cls = rest[0] if rest else "task_done"
+        if cls not in setup.CLASSES:
+            return f"unknown class {cls}. Known: {', '.join(setup.CLASSES)}"
+        ctx_name = rest[1] if len(rest) > 1 else "base"
+        result = _safe_route(cls, {"summary": "manual fire", "context": ctx_name})
+        return f"fired {cls}: {result}"
+
+    if sub == "arm":
+        if not rest:
+            mode = queue.kv_get(conn, "phone_arm") or "yes"
+            return (f"phone arm: {mode} (yes | no | both). "
+                    "no means T4/T5 stay on desktop toast and the chat chain. "
+                    "A ring through Silent is not available.")
+        mode = rest[0].lower()
+        if mode not in ("yes", "no", "both"):
+            return "usage: /sieve arm yes|no|both"
+        queue.kv_set(conn, "phone_arm", "no" if mode == "no" else "yes")
+        if mode == "no":
+            return "phone arm off. T4/T5 use an in-app desktop toast plus the chat chain. No ring."
+        return "phone arm on. T4/T5 still try the phone, and say so when they cannot."
+
     if sub == "setup":
         try:
             return setup.handle(conn, rest)
@@ -642,6 +692,16 @@ def register(ctx):
                                "summary": str(kwargs.get("prompt", ""))[:200]})
 
     ctx.register_hook("on_human_input_request", hook_needs_human)
+
+    def hook_human_resolved(*args, **kwargs):
+        try:
+            conn = queue.db()
+            _desktop_notice(conn, 2, "SIEVE", "Needs-human request was answered. No further alarm from this one.")
+            queue.kv_set(conn, "needs_human_resolved_at", datetime.now().isoformat(timespec="seconds"))
+        except Exception:
+            pass
+
+    ctx.register_hook("on_human_input_resolved", hook_human_resolved)
 
     def hook_kanban_blocked(*args, **kwargs):
         _safe_route("needs_human", {"kind": "kanban", "summary": str(kwargs)[:200]})

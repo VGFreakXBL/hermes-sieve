@@ -37,6 +37,8 @@ async def status():
         "paused_until": queue.kv_get(conn, "paused_until") or "",
         "degraded": queue.kv_get(conn, "escalation_degraded") or "",
         "last_delivery": queue.kv_get(conn, "last_delivery") or "",
+        "desktop_notice": queue.kv_get(conn, "desktop_notice") or "",
+        "phone_arm": queue.kv_get(conn, "phone_arm") or "yes",
         "target": queue.kv_get(conn, "target") or "telegram",
         "windows": wins,
         "mutes": mutes,

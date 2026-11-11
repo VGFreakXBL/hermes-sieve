@@ -52,6 +52,19 @@ def test_setup_apply_is_one_shot(monkeypatch, tmp_path):
     assert "needs_human: T5" in grid
 
 
+def test_no_phone_does_not_fire_alarm(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    fired = []
+    monkeypatch.setattr(plugin.escalate, "fire_alarm", lambda *a, **k: fired.append(1) or {"ok": True})
+    monkeypatch.setattr(plugin.escalate, "push_ready", lambda *a, **k: (True, "fresh"))
+    assert "phone arm off" in plugin._cmd("arm no")
+    decision = plugin.matrix.Decision(tier=5, rule_id="t", label="down", source="user")
+    out = plugin._deliver(conn, 1, "service_down", {}, decision)
+    assert fired == []
+    assert out["arm"] == "desktop"
+    assert queue.kv_get(conn, "desktop_notice")
+
+
 def test_status_and_why(monkeypatch, tmp_path):
     _fresh(monkeypatch, tmp_path)
     assert "SIEVE status" in plugin._cmd("status")

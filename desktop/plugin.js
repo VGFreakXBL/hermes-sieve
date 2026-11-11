@@ -498,6 +498,21 @@ function Pane({ ctx }) {
 function Chip({ ctx }) {
   const status = useData(ctx, "status", "/status", POLL);
   const held = status.data && typeof status.data.held === "number" ? status.data.held : 0;
+  const seen = useRef("");
+  useEffect(() => {
+    const raw = status.data && status.data.desktop_notice;
+    if (!raw || raw === seen.current) return;
+    seen.current = raw;
+    let note = null;
+    try { note = JSON.parse(raw); } catch (e) { return; }
+    if (!note || !host || typeof host.notify !== "function") return;
+    const tier = Number(note.tier || 0);
+    host.notify({
+      kind: tier >= 4 ? "warning" : "info",
+      title: note.title || "SIEVE",
+      message: note.body || "Desktop notice",
+    });
+  }, [status.data]);
   return jsx("button", {
     type: "button",
     onClick: openPane,
