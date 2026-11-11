@@ -62,7 +62,7 @@ def run_checks(dispatch, conn) -> list:
         "status": "ok" if loaded else "warn",
         "detail": "loaded" if loaded else (
             "not loaded" if os.path.exists(plist) else "plist not installed"),
-        "fix": "" if loaded else "run once in a terminal: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist (the agent cannot). It cannot see an outage while the Mac is asleep.",
+        "fix": "" if loaded else "run once in a terminal: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist (the agent cannot). It cannot see an outage while the Mac is asleep; after a sleep the link state for that gap is unknown.",
     })
 
     return checks

@@ -63,6 +63,32 @@ def test_interval_skips_without_force():
     assert calls == []
 
 
+def test_probe_gap_is_not_called_uptime():
+    conn = _conn()
+    earlier = datetime(2026, 11, 11, 8, 0, 0)
+    queue.kv_set(conn, "tailscale_probe_at", earlier.isoformat(timespec="seconds"))
+    queue.kv_set(conn, "tailscale_up", "yes")
+    now = earlier + timedelta(minutes=45)
+    out = probe.observe(conn, lambda *a, **k: None,
+                        runner=lambda: ('{"BackendState": "Running", "Self": {"Online": true}}', 0),
+                        now=now, force=True)
+    assert out["up"] is True
+    assert out["fired"] is False
+    assert "gap" in out["detail"].lower()
+    assert "unknown" in out["detail"].lower()
+    assert queue.kv_get(conn, "probe_gap_note")
+
+
+def test_no_gap_stays_silent():
+    conn = _conn()
+    earlier = datetime(2026, 11, 11, 8, 0, 0)
+    queue.kv_set(conn, "tailscale_probe_at", earlier.isoformat(timespec="seconds"))
+    out = probe.observe(conn, lambda *a, **k: None,
+                        runner=lambda: ('{"BackendState": "Running", "Self": {"Online": true}}', 0),
+                        now=earlier + timedelta(seconds=90), force=True)
+    assert "gap" not in out["detail"].lower()
+
+
 def test_gateway_death_routes_once(tmp_path):
     conn = _conn()
     queue.kv_set(conn, "gateway_up", "yes")

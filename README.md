@@ -221,7 +221,12 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.
 The plist at `scripts/com.vgfreak.sieve-watch.plist` runs it every 120 seconds.
 An unloaded watcher is why a real Tailscale drop can pass unnoticed. Its own
 limit: `StartInterval` only fires while the Mac is awake, so an outage that
-coincides with the Mac sleeping is still unobserved. A dead gateway cannot ring
+coincides with the Mac sleeping is still unobserved. The plist also carries
+`WatchPaths` on the network config so a wake or reconnect re-runs the probe,
+which narrows that window for a traveling machine, though only a real sleep
+cycle proves it. When a probe gap happens, SIEVE does **not** claim the link
+stayed up: `/sieve status` reports the gap and that the link state for it is
+unknown, because a drop and recovery across a sleep leaves no edge to catch. A dead gateway cannot ring
 the phone. `hermes send` still carries the chat chain, and it does not need
 the gateway process. A digest uses the global chain, else any per-tier chain
 you named, else telegram. A T4/T5 or a notice uses its per-tier chain first,

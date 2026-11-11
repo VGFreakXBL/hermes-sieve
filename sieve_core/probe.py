@@ -53,8 +53,29 @@ def read_status(runner=None) -> dict:
     return parsed
 
 
-def observe(conn, route, *, force=False, now=None, runner=None, min_interval=60) -> dict:
+def _gap_note(last_iso: str, now, gap_seconds: int) -> str:
+    """A probe gap means the Mac slept or the watcher was not running.
+
+    After a gap we cannot claim the link stayed up: it may have dropped and
+    recovered while nothing was watching. Say so instead of implying uptime.
+    """
+    if not last_iso:
+        return ""
+    try:
+        elapsed = (now - datetime.fromisoformat(last_iso)).total_seconds()
+    except ValueError:
+        return ""
+    if elapsed <= gap_seconds:
+        return ""
+    mins = int(elapsed // 60)
+    return (f"probe gap of {mins} min (Mac likely slept). "
+            "Link state during that gap is unknown: it may have dropped and recovered unobserved.")
+
+
+def observe(conn, route, *, force=False, now=None, runner=None, min_interval=60, gap_seconds=None) -> dict:
     now = now or datetime.now()
+    if gap_seconds is None:
+        gap_seconds = 3 * min_interval
     last = queue.kv_get(conn, "tailscale_probe_at") or ""
     if not force and last:
         try:
@@ -65,6 +86,9 @@ def observe(conn, route, *, force=False, now=None, runner=None, min_interval=60)
                         "detail": "probe interval not elapsed"}
         except ValueError:
             pass
+    gap = _gap_note(last, now, gap_seconds)
+    if gap:
+        queue.kv_set(conn, "probe_gap_note", gap)
     state = read_status(runner)
     queue.kv_set(conn, "tailscale_probe_at", now.isoformat(timespec="seconds"))
     queue.kv_set(conn, "tailscale_detail", state.get("detail") or "")
@@ -86,8 +110,11 @@ def observe(conn, route, *, force=False, now=None, runner=None, min_interval=60)
         })
         fired = True
     queue.kv_set(conn, "tailscale_up", up)
+    detail = state.get("detail") or ""
+    if gap and state.get("up"):
+        detail = f"{detail} | {gap}"
     return {"skipped": False, "fired": fired, "installed": True, "up": bool(state.get("up")),
-            "detail": state.get("detail") or ""}
+            "detail": detail}
 
 
 def gateway_alive(home: Path, pid_alive=None) -> dict:
