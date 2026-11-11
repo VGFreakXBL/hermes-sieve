@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from sieve_core import queue  # noqa: E402
+from sieve_core import queue, probe as tailscale_probe  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("sieve_plugin", _ROOT / "__init__.py")
 _plugin = importlib.util.module_from_spec(_spec)
@@ -28,6 +28,10 @@ router = APIRouter()
 @router.get("/status")
 async def status():
     conn = queue.db()
+    try:
+        tailscale_probe.observe(conn, _plugin._safe_route)
+    except Exception:
+        pass
     wins = [{"id": w[0], "start": w[1], "end": w[2], "days": w[3], "floor": w[4], "label": w[5]}
             for w in queue.windows(conn)]
     mutes = [{"id": m[0], "tier": m[1], "until": m[2]}

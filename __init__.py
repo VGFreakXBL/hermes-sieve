@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from sieve_core import classify, delivery, doctor, escalate, matrix, queue, scheduler, setup  # noqa: E402
+from sieve_core import classify, delivery, doctor, escalate, matrix, probe, queue, scheduler, setup  # noqa: E402
 
 _VERSION = "0.1.0"
 _CTX = None
@@ -389,6 +389,9 @@ def _cmd_inner(conn, sub, rest) -> str:
         last = queue.kv_get(conn, "last_delivery")
         if last:
             lines.append(f"last delivery: {last}")
+        ts = queue.kv_get(conn, "tailscale_up")
+        if ts:
+            lines.append(f"tailscale: {ts} ({queue.kv_get(conn, 'tailscale_detail') or 'no detail'})")
         return "\n".join(lines)
 
     if sub == "why":
@@ -619,6 +622,16 @@ def _cmd_inner(conn, sub, rest) -> str:
         return (f"policy {mode}: {applied['rules']} rule(s), "
                 f"{applied['quiet_windows']} window(s), {applied['mutes']} mute(s), "
                 f"{applied['kv']} setting(s). Run /sieve status to confirm.")
+
+    if sub == "probe":
+        result = probe.observe(conn, _safe_route, force=True)
+        if not result.get("installed"):
+            return ("tailscale is not installed. That is not an outage. "
+                    "/sieve fire service_down is the manual path.")
+        if result.get("fired"):
+            return f"Tailscale went down. Routed service_down. {result.get('detail') or ''}"
+        state = "up" if result.get("up") else "down" if result.get("up") is False else "unknown"
+        return f"Tailscale {state}. No new outage. {result.get('detail') or ''}"
 
     if sub == "fire":
         cls = rest[0] if rest else "task_done"
