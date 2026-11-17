@@ -43,12 +43,15 @@ def device_status(dispatch) -> dict:
     try:
         raw = _dispatch(dispatch, "mobile_devices", {})
     except Exception as exc:
+        if "ctx unavailable" in str(exc).lower():
+            return {"available": False,
+                    "reason": "no tool context on this surface (this surface cannot dispatch phone tools)"}
         return {"available": False, "reason": f"device toolset unavailable ({exc})"}
     if isinstance(raw, str) and raw.startswith("ERROR"):
         return {"available": False, "reason": raw[:200]}
     data = _parse(raw)
     if not data:
-        return {"available": False, "reason": "mobile_device toolset unavailable"}
+        return {"available": False, "reason": "mobile_device toolset not loaded"}
     devices = data.get("devices") or data.get("current_access", {}).get("devices", []) or []
     return {"available": True, "raw": data, "devices": devices}
 
@@ -62,7 +65,7 @@ def push_ready(dispatch) -> tuple:
         # merge them. The pane has no device toolset in its context at all.
         return False, status.get("reason") or "device toolset unavailable"
     if not status["devices"]:
-        return False, "no device registered (open the Hermes app on your phone)"
+        return False, "no device paired to this profile (open the Hermes app and sign in)"
     import time
     fresh = False
     for dev in status["devices"]:
@@ -76,8 +79,29 @@ def push_ready(dispatch) -> tuple:
             except Exception:
                 pass
     if not fresh:
-        return False, "device stale (no recent sync; open the Hermes app)"
+        return False, "device stale (no recent sync)"
     return True, "device fresh"
+
+
+def push_fix(reason: str) -> str:
+    """The reachable next step for a push-gate reason. Never points at an
+    action this build cannot complete: there is no push registration to
+    configure, and the fix text must not pretend otherwise."""
+    r = (reason or "").lower()
+    if "no tool context" in r or "ctx unavailable" in r:
+        return ("this surface cannot write the phone by design. "
+                "Run /sieve doctor and /sieve test from a Discord or Telegram chat.")
+    if "toolset" in r:
+        return "hermes config set toolsets '[\"hermes-cli\",\"mobile_device\"]', then restart."
+    if "no device" in r or "not paired" in r:
+        return "open the Hermes app and sign in to this profile. Pairing follows the sign-in."
+    if "stale" in r:
+        return ("open the Hermes app once and let it sync. Writes queue while the app is closed; "
+                "closed-app wake is a known limit of this build.")
+    if "push is not configured" in r:
+        return ("no enable path exists in this build. T4/T5 ring only while the Hermes app is "
+                "open and synced; writes queue while it is closed.")
+    return "run /sieve doctor for the fix path."
 
 
 def fire_alarm(dispatch, label: str, at_iso: str = None, time_hhmm: str = None,
@@ -108,7 +132,20 @@ def fire_alarm(dispatch, label: str, at_iso: str = None, time_hhmm: str = None,
     except Exception as exc:
         return {"ok": False, "reason": f"alarm write could not be dispatched ({exc})"}
     if str(raw).startswith("ERROR"):
-        return {"ok": False, "reason": raw}
+        return {"ok": False, "reason": str(raw)[:200]}
+    data = raw if isinstance(raw, dict) else _parse(raw)
+    if isinstance(data, dict):
+        err = data.get("error")
+        res = data.get("result")
+        if not err and isinstance(res, dict):
+            err = res.get("error")
+        landed = isinstance(res, dict) and res.get("data")
+        if err and not landed:
+            reason = str(err)[:200]
+            if "idempotency" in reason.lower():
+                reason += (" (a changed payload is a new action and needs a fresh idempotency "
+                           "key; only an identical retry reuses the key)")
+            return {"ok": False, "reason": reason}
     try:
         listing = _dispatch(dispatch, "mobile_alarms_list", {})
     except Exception as exc:
