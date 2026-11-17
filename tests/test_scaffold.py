@@ -1,8 +1,10 @@
 """Scaffold tests (Task 1.1) — no network, no live Hermes ctx needed."""
 
 import importlib.util
-import json
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
@@ -12,6 +14,40 @@ def _load_plugin_module():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+class _FakeCtx:
+    """Captures what `register` subscribes, without a live host."""
+
+    def __init__(self):
+        self.hooks = {}
+        self.tools = []
+        self.commands = []
+
+    def register_hook(self, name, fn):
+        self.hooks[name] = fn
+
+    def register_tool(self, **kwargs):
+        self.tools.append(kwargs.get("name"))
+
+    def register_command(self, *args, **kwargs):
+        self.commands.append(args[0] if args else kwargs.get("name"))
+
+
+def _provided_hooks():
+    """Hook names declared in plugin.yaml, so the manifest and code cannot drift."""
+    lines = (PLUGIN_DIR / "plugin.yaml").read_text().splitlines()
+    out, inside = [], False
+    for line in lines:
+        if line.startswith("provides_hooks:"):
+            inside = True
+            continue
+        if inside:
+            if line.startswith("  - "):
+                out.append(line.strip()[2:].strip())
+            elif line.strip() and not line.startswith(" "):
+                break
+    return set(out)
 
 
 def test_plugin_yaml_exists_and_names_sieve():
@@ -25,26 +61,58 @@ def test_register_is_importable():
     assert hasattr(mod, "register")
 
 
-def test_spiker_redacts_secret_keys(tmp_path):
+def test_registered_hooks_match_plugin_yaml(monkeypatch, tmp_path):
     mod = _load_plugin_module()
-    mod._SPIKE_LOG = tmp_path / "spike.jsonl"
-    mod._spike("pre_approval_request", args=["rm -rf /"], kwargs={
-        "command": "SECRET-COMMAND", "prompt": "SECRET-PROMPT", "surface": "gateway",
-    })
-    line = mod._SPIKE_LOG.read_text()
-    assert "SECRET-COMMAND" not in line
-    assert "SECRET-PROMPT" not in line
-    assert "gateway" in line
-    rec = json.loads(line)
-    assert rec["event"] == "pre_approval_request"
+    conn = sqlite3.connect(":memory:")
+    mod.queue.init_schema(conn)
+    monkeypatch.setattr(mod.queue, "db", lambda: conn)
+    ctx = _FakeCtx()
+    mod.register(ctx)
+    assert set(ctx.hooks) == _provided_hooks()
+    assert "sieve_ping" in ctx.tools
 
 
-def test_all_spike_events_registered_are_valid_hook_names():
+def test_hooks_never_persist_payloads(monkeypatch):
+    """No event spy log: driving every hook with a sentinel must not write it anywhere.
+
+    This is the blocking review item. Observers used to append hook args (and on
+    `pre_gateway_dispatch` the raw inbound message) to docs/spike-events.jsonl.
+    """
     mod = _load_plugin_module()
-    # Names observed in hermes_cli.plugins.VALID_HOOKS (docs/plugins.md list).
-    valid = {
-        "pre_gateway_dispatch", "on_human_input_request", "on_human_input_resolved",
-        "pre_approval_request", "post_approval_response", "kanban_task_blocked",
-        "subagent_stop", "on_session_end", "on_interim_message",
-    }
-    assert set(mod.SPIKE_EVENTS) <= valid
+    conn = sqlite3.connect(":memory:")
+    mod.queue.init_schema(conn)
+    monkeypatch.setattr(mod.queue, "db", lambda: conn)
+    monkeypatch.setattr(mod.delivery, "send", lambda *a, **k: True)
+    ctx = _FakeCtx()
+    mod.register(ctx)
+    sentinel = "SENTINEL-INBOUND-TEXT-9f2c"
+    for name, fn in ctx.hooks.items():
+        try:
+            fn(sentinel, event=sentinel, prompt=sentinel, summary=sentinel,
+               text=sentinel, kind="needs_human")
+        except Exception:
+            pass
+    leaked = []
+    for path in PLUGIN_DIR.rglob("*"):
+        if ".git" in path.parts or not path.is_file():
+            continue
+        if path.suffix not in {".jsonl", ".json", ".log", ".txt"}:
+            continue
+        try:
+            if sentinel in path.read_text(errors="ignore"):
+                leaked.append(path)
+        except OSError:
+            continue
+    assert leaked == [], f"hook payload persisted to {leaked}"
+    assert not hasattr(mod, "SPIKE_EVENTS")
+
+
+def test_policy_path_stays_inside_plugin_data_dir(monkeypatch, tmp_path):
+    mod = _load_plugin_module()
+    monkeypatch.setattr(mod, "_policy_dir", lambda: tmp_path)
+    assert mod._policy_path() == (tmp_path / "policy.json").resolve()
+    assert mod._policy_path("mine.json") == (tmp_path / "mine.json").resolve()
+    with pytest.raises(ValueError):
+        mod._policy_path("../escape.json")
+    with pytest.raises(ValueError):
+        mod._policy_path("/etc/passwd")

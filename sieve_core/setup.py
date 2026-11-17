@@ -8,7 +8,7 @@ from sieve_core import matrix, queue
 
 CLASSES = [cls for (cls, _match, _tier, _label) in matrix.DEFAULT_RULES]
 
-STEPS = ("always", "sleep", "floor", "arm", "digest", "daytime")
+STEPS = ("always", "sleep", "floor", "arm", "digest", "chain", "daytime")
 
 QUESTIONS = {
     "always": (
@@ -41,6 +41,13 @@ QUESTIONS = {
         "Where should held digests be delivered? "
         "T1 is a desktop chip, not a message. This sets the chain for held items. "
         "Examples: telegram, discord:#ops, slack:C012ABCD, photon:+15555550100."
+    ),
+    "chain": (
+        "Where should T4/T5 interrupts be delivered? "
+        "This chain is the messaging push that runs alongside the phone arm, and instead of it "
+        "when the arm cannot ring. It is redundant, not failover: every leg is attempted. "
+        "Pick real targets from `hermes send --list`. "
+        "Example: telegram,photon:any;-;+155****0100. Reply with a comma chain."
     ),
     "daytime": (
         "For classes you did not mark as always-on, what daytime tier? "
@@ -139,6 +146,17 @@ def apply_digest(conn, raw: str) -> str:
     return f"digest chain: {', '.join(chain)}"
 
 
+def apply_chain(conn, raw: str) -> str:
+    from sieve_core import delivery
+    chain = delivery.parse_chain(raw.replace(" ", ""))
+    if not chain:
+        raise ValueError("T4/T5 chain is empty")
+    joined = ",".join(chain)
+    queue.kv_set(conn, "target:T4", joined)
+    queue.kv_set(conn, "target:T5", joined)
+    return f"T4/T5 chain: {', '.join(chain)}"
+
+
 def apply_daytime(conn, raw: str) -> str:
     tier = _parse_tier(raw)
     if tier > 3:
@@ -170,16 +188,22 @@ _APPLY = {
     "floor": apply_floor,
     "arm": apply_arm,
     "digest": apply_digest,
+    "chain": apply_chain,
     "daytime": apply_daytime,
 }
 
 
 def question(step: str) -> str:
     if step == "done":
-        return ("Setup is complete. Change any cell with /sieve matrix set <class> T<n> [context=name]. "
+        return ("Setup is complete. Verify the arm from this chat: /sieve test T4, then "
+                "/sieve test T5 (the alarm fires about a minute out; a verified read-back "
+                "clears any escalation-degraded stamp). "
+                "Change any cell with /sieve matrix set <class> T<n> [context=name]. "
                 "One more thing, outside the plugin: the Tailscale and gateway watchdog does not start "
-                "itself. To catch a link drop while Desktop is closed, load it once in a terminal: "
-                "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist "
+                "itself, and its plist ships as a template so it carries no one machine's paths. "
+                "To catch a link drop while Desktop is closed, render and load it once in a terminal "
+                "from the plugin directory: bash scripts/install-watchdog.sh, then launchctl bootstrap "
+                "gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist "
                 "(run it yourself; the agent cannot). It still cannot see an outage while the Mac is asleep.")
     return QUESTIONS[step]
 
@@ -188,9 +212,9 @@ def show() -> str:
     lines = [
         "SIEVE setup. An agent can answer these without opening the pane.",
         "Walk: /sieve setup, then /sieve setup <answer> for each question.",
-        "One shot: /sieve setup apply always=needs_human,service_down sleep=23:00-08:00 floor=T5 arm=no digest=telegram daytime=T2",
+        "One shot: /sieve setup apply always=needs_human,service_down sleep=23:00-08:00 floor=T5 arm=no digest=telegram chain=telegram,photon:any;-;+15555550100 daytime=T2",
         "Any cell: /sieve matrix set world_message T0 context=sleeping",
-        "Watchdog (opt-in, not started by the plugin): launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist",
+        "Watchdog (opt-in, not started by the plugin): bash scripts/install-watchdog.sh && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist",
     ]
     for step in STEPS:
         lines.append(f"- {step}: {QUESTIONS[step]}")
@@ -209,7 +233,7 @@ def handle(conn, rest) -> str:
         return f"[always] {QUESTIONS['always']}"
     if head == "apply":
         if len(rest) < 2:
-            return "usage: /sieve setup apply always=needs_human sleep=23:00-08:00 floor=T5 arm=no digest=telegram daytime=T2"
+            return "usage: /sieve setup apply always=needs_human sleep=23:00-08:00 floor=T5 arm=no digest=telegram chain=telegram,photon:any;-;+15555550100 daytime=T2"
         lines = []
         for tok in rest[1:]:
             if "=" not in tok:

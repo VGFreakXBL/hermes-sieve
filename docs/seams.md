@@ -1,6 +1,8 @@
 # SIEVE seam reconnaissance (Task 1.2)
 
-Status: doc-mapping DONE (Wed Nov 4 night) · live spikes PENDING (Day 1 AM).
+Status: DONE — live recon closed 2026-11-17. The log-only observers were retired
+before release: they persisted hook args (and, on `pre_gateway_dispatch`, the raw
+inbound message) to `docs/spike-events.jsonl`. No payload log ships.
 
 ## Event class → hook mapping (source: hermes docs, `hermes_cli.plugins.VALID_HOOKS` = 27 hooks)
 
@@ -12,7 +14,7 @@ Status: doc-mapping DONE (Wed Nov 4 night) · live spikes PENDING (Day 1 AM).
 | subagent/background completions | `subagent_start` / `subagent_stop`, `agent_loop_stopped` | CONFIRMED in hook list | Basis for "agent finished X" events (delegation notifications). |
 | cron completions | `on_session_end` (fires from cron completion per plugins/AGENTS.md) | CONFIRMED (indirect) | Spike must verify the session_end kwargs distinguish a cron-scope run (profile_cron_scope). Fallback: custodian-pattern scan of cron output. |
 | inbound platform messages | `gateway_platform_event` | CONFIRMED (partial) | Docs note: currently Telegram reactions only at gateway boundary. Spike: what inbound message visibility exists (`pre_llm_call` user_message is the reliable fallback). |
-| OUTBOUND agent messages (hold/queue target) | `pre_gateway_dispatch` | **UNVERIFIED — top spike priority** | Directive/control category. If it fires before platform delivery and can hold/defer, it is THE outbound seam. If observer-only, SIEVE v1 governs notification events + `hermes send` flows, not live chat replies (documented scope). |
+| OUTBOUND agent messages (hold/queue target) | `pre_gateway_dispatch` | OUT OF SCOPE (not subscribed) | Carries the raw inbound message object; logging or routing it would put message text in the boundary. SIEVE v1 governs notification events + `hermes send` flows, not live chat replies. |
 | agent-initiated messages | `on_interim_message`, `on_stream_end` | UNVERIFIED | Spike for `hermes send`-style flows. |
 
 ## Category context (VALID_HOOKS, 27 total)
@@ -23,8 +25,12 @@ Status: doc-mapping DONE (Wed Nov 4 night) · live spikes PENDING (Day 1 AM).
 ## Gateway hooks (HOOK.yaml + handler.py in ~/.hermes/hooks/) — NOT our seam
 Load once at gateway startup only; CLI/TUI/Desktop/cron never load them. Plugin `ctx.register_hook` is the correct registry for SIEVE (works everywhere the plugin loads).
 
-## Live spike protocol (Day 1 AM)
-Scaffold registers log-only observers for the 9 SPIKE_EVENTS (see `__init__.py`) writing to `docs/spike-events.jsonl` (secret keys redacted). Run one live session exercising: a clarify question, a dangerous-command approval, a subagent run, a cron job, an outbound `hermes send`. Then read the log and fill the "Status" column with actual fire order/timing/payload shapes.
+## Live spike protocol (historical)
+Scaffold registered log-only observers for the 9 SPIKE_EVENTS (see `__init__.py`)
+writing to `docs/spike-events.jsonl`. That log recorded positional args unredacted,
+which meant inbound message text from `pre_gateway_dispatch` hit disk for every
+sender. **The observers and the log are removed from the shipped build.** The
+results below are kept as the recon record only.
 
 ## Live spike results (Wed Nov 4, 23:03 — first one-shot run after `hermes plugins enable sieve`)
 
@@ -38,7 +44,9 @@ Pipeline verified: hooks fire and write `docs/spike-events.jsonl` (secret keys r
 
 Operational finding: new plugin = `not enabled` until `hermes plugins enable sieve`; hooks then activate in the running gateway immediately ("gateway_transforms, hooks" live; tools deferred to next session). Also: `toolsets: [hermes-cli, mobile_device]` gates tool loading — SIEVE's future tools will need their toolset listed (hooks are unaffected).
 
-## Spike questions remaining (Day 1 AM)
-1. Can `pre_gateway_dispatch` defer/hold a dispatch (directive), or only observe? This decides whether live chat replies are in v1 scope.
-2. Does `on_session_end` expose enough to identify cron-completion runs?
-3. Payload shape of `kanban_task_blocked` and `subagent_stop`.
+## Spike questions (resolved)
+1. `pre_gateway_dispatch` — resolved by scope decision: not subscribed. It is the
+   inbound-message seam, and SIEVE's boundary is notification routing, not chat.
+2. `on_session_end` — yes: `task_id` present means a task/cron run, absent means an
+   ordinary turn end. Implemented in `hook_session_end`.
+3. Payload shapes — captured for the hooks still subscribed; recorded above.

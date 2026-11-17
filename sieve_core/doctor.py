@@ -27,8 +27,8 @@ def run_checks(dispatch, conn) -> list:
                        "fix": "hermes config set toolsets '[\"hermes-cli\",\"mobile_device\"]' then restart"})
     elif not status["devices"]:
         checks.append({"name": "mobile_device toolset", "status": "warn",
-                       "detail": "tools loaded but no device registered",
-                       "fix": "open the Hermes app on your phone and sign in"})
+                       "detail": "tools loaded but no device paired to this profile",
+                       "fix": "open the Hermes app and sign in to this profile"})
     else:
         checks.append({"name": "mobile_device toolset", "status": "ok",
                        "detail": f"{len(status['devices'])} device(s)", "fix": ""})
@@ -37,7 +37,7 @@ def run_checks(dispatch, conn) -> list:
     ready, reason = escalate.push_ready(dispatch)
     checks.append({"name": "push (T4/T5 gate)", "status": "ok" if ready else "warn",
                    "detail": reason,
-                   "fix": "" if ready else "open the Hermes app; if writes stay pending, configure push"})
+                   "fix": "" if ready else escalate.push_fix(reason)})
 
     # 4. Delivery target configured
     from . import queue as q
@@ -62,7 +62,11 @@ def run_checks(dispatch, conn) -> list:
         "status": "ok" if loaded else "warn",
         "detail": "loaded" if loaded else (
             "not loaded" if os.path.exists(plist) else "plist not installed"),
-        "fix": "" if loaded else "run once in a terminal: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist (the agent cannot). It cannot see an outage while the Mac is asleep; after a sleep the link state for that gap is unknown.",
+        "fix": "" if loaded else (
+            "run once in a terminal from the plugin dir: bash scripts/install-watchdog.sh, "
+            "then launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist "
+            "(the agent cannot bootstrap). It cannot see an outage while the Mac is asleep; "
+            "after a sleep the link state for that gap is unknown."),
     })
 
     return checks

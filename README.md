@@ -139,10 +139,17 @@ behavior.
 Policy travels as a file, and the user moves it:
 
 ```
-/sieve export [path]                 # writes ~/.hermes/sieve-policy.json by default
-/sieve import <path>                 # merge into this profile
-/sieve import <path> replace         # replace this profile's user policy first
+/sieve export [path]                 # writes <plugin-data>/sieve/policy.json by default
+/sieve import [path]                 # merge into this profile (default file if omitted)
+/sieve import [path] replace         # replace this profile's user policy first
 ```
+
+Policy paths are confined to this profile's own plugin data directory:
+`<hermes home>/plugin-data/sieve/`. A relative path resolves there, the default
+is `policy.json`, and a path that escapes the directory is refused. To move
+policy between profiles, export on the profile that has it right, copy
+`plugin-data/sieve/policy.json` into the other profile's
+`plugin-data/sieve/` directory, then run `/sieve import` there.
 
 The file carries user rules only. Seeded defaults live in code, so importing a
 policy never freezes a stale copy of them. Operational state stays behind:
@@ -157,6 +164,32 @@ should own it, one command each.
 
 Import validates the whole file before writing anything, so a malformed policy is
 refused instead of half-applied.
+
+## Setup by archetype
+
+Run `/sieve doctor` from **Discord or Telegram** first — the Desktop pane
+cannot write the phone by design, and its phone answers say so. Doctor probes
+your setup and prints a reachable fix for anything missing. Then match what it
+found:
+
+- **Phone paired to this profile, Hermes app open and synced** — the full
+  ladder. `arm=yes`; `/sieve test T4` then `/sieve test T5` verifies the ring
+  (the alarm fires about a minute out; a verified read-back clears any
+  escalation-degraded stamp). T5 is top priority with the same tone as T4.
+- **Hermes app closed, or the device shows stale** — writes queue until the
+  app opens, and T4/T5 degrade to the chat chain (`[escalation degraded: ...]`
+  says so in the message). The fix is opening the app. There is no push to
+  configure: closed-app wake is a known limit of the current mobile build.
+- **No phone, or paired to another profile** — a declared no-phone profile, not
+  a broken one. `arm=no`; T4/T5 stay on the in-app desktop toast plus the chat
+  chain. Pairing follows whichever profile completed the app sign-in.
+- **Desktop pane** — policy editing, status, and the matrix work everywhere.
+  `/sieve doctor` and `/sieve test` need a chat surface for their phone parts.
+
+Nothing in this build may claim: closed-app reach, Focus break-through outside
+the alarm arm, a siren, critical alerts, or custom sounds. A messaging push
+(Telegram/iMessage/Discord) is an ordinary notification: Focus can silence it,
+and it never rings.
 
 ## Disclosures
 
@@ -211,14 +244,19 @@ closed or the Mac is asleep. `scripts/watch.py` is the path that still runs
 then: it calls the same route a hook would have called, with no model and no
 Hermes cron, so a dead gateway cannot ring the phone but `hermes send` still
 carries the chat chain. **It does not start itself.** A shipped plugin cannot
-register a launchd job, so the watcher is opt-in and unloaded until you load it
-once from a terminal:
+register a launchd job, and the plist is a template so it does not carry one
+machine's absolute paths. Render and install it once, from a terminal in the
+plugin directory:
 
 ```
+bash scripts/install-watchdog.sh    # renders the plist into ~/Library/LaunchAgents
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vgfreak.sieve-watch.plist
 ```
 
-The plist at `scripts/com.vgfreak.sieve-watch.plist` runs it every 120 seconds.
+The template at `scripts/com.vgfreak.sieve-watch.plist.template` runs the
+watcher every 120 seconds. The install script substitutes `$HOME` and
+`$HERMES_HOME`; `scripts/watch.py` resolves the Hermes home the same way, so a
+non-default profile root works without editing the script.
 An unloaded watcher is why a real Tailscale drop can pass unnoticed. Its own
 limit: `StartInterval` only fires while the Mac is awake, so an outage that
 coincides with the Mac sleeping is still unobserved. The plist also carries
@@ -234,13 +272,13 @@ else the global chain, else telegram. It does not hunt platforms
 you did not name. A failed send keeps the hold and `/sieve status` records
 which legs failed. SIEVE does not read `.env`,
 `auth.json`, the credential store, or another profile's data, and it has no
-`os.environ` access. The files it writes are the SQLite database above, a policy
-file when you run `/sieve export`, and a local observe-only hook log at
-`docs/spike-events.jsonl` inside the plugin directory (gitignored, so it is not
-part of the published tree). That log records the hook
-name plus string arguments truncated to 200 characters; the kwargs `command`,
-`prompt`, `password`, `answer`, `content`, and `text` are redacted, while values
-passed positionally are truncated but not key-filtered.
+`os.environ` access. The files it writes are the SQLite database above and a
+policy file when you run `/sieve export`, both inside this profile's
+`plugin-data/sieve/` directory. **It writes no hook log.** No event payload,
+message text, prompt, or command is copied to disk by this plugin: the
+seam-recon observer log that earlier builds kept at
+`docs/spike-events.jsonl` is removed, and `pre_gateway_dispatch` is no longer
+subscribed at all, so inbound chat never reaches SIEVE.
 
 **No telemetry.** Nothing is uploaded. There is no analytics, crash, or usage
 reporting anywhere in this tree.

@@ -4,12 +4,9 @@ description: SIEVE — a user-owned notification boundary. Tiers, quiet hours, a
 provides_tools:
   - sieve_ping
 provides_hooks:
-  - pre_gateway_dispatch
   - on_human_input_request
   - on_human_input_resolved
-  - pre_approval_request
-  - post_approval_response
   - kanban_task_blocked
   - subagent_stop
   - on_session_end
-  - on_interim_message
+  - post_approval_response

@@ -4,7 +4,9 @@ Pipeline: event -> user-owned boundary matrix (rules beat defaults) ->
 scheduler (quiet hours / mutes / pause, delay-never-drop) -> delivery arm
 (digest hold, message, or push-gated mobile escalation).
 
-Observer spikes from seam recon are retained for one more cycle (docs/seams.md).
+This plugin subscribes only to notification routing hooks. It keeps no copy of
+hook payloads: no event spy log exists in the shipped build. Inbound chat
+messages are outside its boundary (`pre_gateway_dispatch` is not subscribed).
 """
 
 import json
@@ -28,6 +30,32 @@ def _safe_int(raw, default=0) -> int:
         return int(str(raw).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _policy_dir() -> Path:
+    """This profile's plugin data dir. One seam so tests can redirect it."""
+    from plugins.plugin_storage import plugin_data_dir
+    return plugin_data_dir("sieve")
+
+
+def _policy_path(raw=None) -> Path:
+    """Resolve a policy file path INSIDE this profile's plugin data dir.
+
+    Default is ``<data dir>/policy.json``; a relative path resolves there.
+    A path that escapes the dir is refused: the plugin writes policy only into
+    its own profile store, never an arbitrary path and never another profile's
+    data. Moving policy to a different profile is a copy the user makes.
+    """
+    base = _policy_dir().expanduser().resolve()
+    if not raw:
+        return base / "policy.json"
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve()
+    if resolved == base or base not in resolved.parents:
+        raise ValueError(f"path must stay inside {base} (default file: policy.json)")
+    return resolved
 
 
 def _landed(result: dict) -> bool:
@@ -83,33 +111,6 @@ def _digest_targets(conn) -> list:
             if leg not in named:
                 named.append(leg)
     return named or [DEFAULT_TARGET]
-
-# --- seam-recon spikes (log-only observers; Task 1.2, retained) -----------
-_SPIKE_LOG = _ROOT / "docs" / "spike-events.jsonl"
-_REDACT_KEYS = {"command", "prompt", "password", "answer", "content", "text"}
-SPIKE_EVENTS = (
-    "pre_gateway_dispatch", "on_human_input_request", "on_human_input_resolved",
-    "pre_approval_request", "post_approval_response", "kanban_task_blocked",
-    "subagent_stop", "on_session_end", "on_interim_message",
-)
-
-
-def _spike(event, args, kwargs):
-    rec = {"ts": datetime.now().isoformat(timespec="seconds"), "event": event,
-           "args": [str(a)[:200] for a in args]}
-    rec.update({k: str(v)[:200] for k, v in kwargs.items() if k not in _REDACT_KEYS})
-    try:
-        with _SPIKE_LOG.open("a") as f:
-            f.write(json.dumps(rec, default=str) + "\n")
-    except Exception:
-        pass
-
-
-def _make_spiker(event):
-    def spiker(*args, **kwargs):
-        _spike(event, args, kwargs)
-    return spiker
-
 
 # --- core routing ----------------------------------------------------------
 
@@ -526,14 +527,17 @@ def _cmd_inner(conn, sub, rest) -> str:
 
     if sub == "doctor":
         checks = doctor.run_checks(_dispatch, conn)
-        return _stamp_phone_check(conn, doctor.format_checks(checks))
+        caps = ("capability: T4/T5 ring while the Hermes app is open and synced. "
+                "With the app closed, writes queue and the alert degrades to the chat chain. "
+                "Closed-app wake is a known limit of this build; there is no push to configure.")
+        return _stamp_phone_check(conn, doctor.format_checks(checks) + "\n" + caps)
 
     if sub == "test":
         # /sieve test T4 | T5  (the first-enable ritual)
         tier = int(rest[0].lower().lstrip("t")) if rest else 4
         ready, why = escalate.push_ready(_dispatch)
         if not ready:
-            blocked = f"push-gate blocked: {why}. Run /sieve doctor in Discord or Telegram, not in the Desktop pane or Desktop chat."
+            blocked = f"push-gate blocked: {why}.\nfix: {escalate.push_fix(why)}"
             return _stamp_phone_check(conn, blocked)
         key = f"sieve-test-{int(datetime.now().timestamp())}"
         if tier >= 5:
@@ -547,6 +551,12 @@ def _cmd_inner(conn, sub, rest) -> str:
         out = f"test T{tier}: {verdict}"
         if "verified" in result:
             out += f" (read-back {'verified' if result.get('verified') else 'UNVERIFIED'})"
+        confirmed = bool(result.get("verified")) if "verified" in result else True
+        if result.get("ok") and confirmed:
+            # A verified strong-arm success clears the degrade record (only the
+            # arm clears it, never a fallback send), and stamps the ritual.
+            queue.kv_set(conn, "escalation_degraded", "")
+            queue.kv_set(conn, "ritual_done_at", datetime.now().isoformat(timespec="seconds"))
         return _stamp_phone_check(conn, out)
 
     if sub == "target":
@@ -622,9 +632,11 @@ def _cmd_inner(conn, sub, rest) -> str:
         return f"promotion ladder set: held items escalate after {rest[0]} min"
 
     if sub == "export":
-        import os
-        path = rest[0] if rest else os.path.expanduser("~/.hermes/sieve-policy.json")
-        path = os.path.expanduser(path)
+        try:
+            path = _policy_path(rest[0] if rest else None)
+        except ValueError as exc:
+            return f"export refused: {exc}"
+        path.parent.mkdir(parents=True, exist_ok=True)
         data = queue.export_policy(conn)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, sort_keys=True)
@@ -633,14 +645,15 @@ def _cmd_inner(conn, sub, rest) -> str:
                 f"{len(data['kv'])} setting(s) -> {path}")
 
     if sub == "import":
-        import os
-        if not rest:
-            return "usage: /sieve import <path> [replace]"
-        path = os.path.expanduser(rest[0])
+        try:
+            path = _policy_path(rest[0] if rest else None)
+        except ValueError as exc:
+            return f"import refused: {exc}"
         replace = len(rest) > 1 and rest[1].lower() in ("replace", "overwrite")
-        if not os.path.exists(path):
-            return f"no such policy file: {path}"
-        if os.path.getsize(path) > 1_000_000:
+        if not path.exists():
+            return (f"no such policy file: {path}. Run /sieve export here first, or copy a "
+                    "policy file into this profile's plugin-data/sieve/ directory.")
+        if path.stat().st_size > 1_000_000:
             return "policy file too large (1MB limit)"
         try:
             with open(path, encoding="utf-8") as fh:
@@ -726,10 +739,6 @@ def register(ctx):
                            "held": queue.held_count(queue.db())})
 
     ctx.register_tool(name="sieve_ping", toolset="sieve", schema=schema, handler=handle_ping)
-
-    # seam-recon spikes (log-only)
-    for event in SPIKE_EVENTS:
-        ctx.register_hook(event, _make_spiker(event))
 
     # --- routing hooks (the SIEVE boundary) --------------------------------
     def hook_needs_human(*args, **kwargs):

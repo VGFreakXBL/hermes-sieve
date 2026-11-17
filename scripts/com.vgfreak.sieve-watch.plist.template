@@ -1,14 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE. Do not load this file directly: launchd needs absolute paths and a
+  .plist in ~/Library/LaunchAgents. Render it with:
+
+      bash scripts/install-watchdog.sh
+
+  __HERMES_HOME__ is replaced with $HERMES_HOME (default ~/.hermes).
+-->
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>com.vgfreak.sieve-watch</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/alexwilson/.hermes/hermes-agent/venv/bin/python</string>
-    <string>/Users/alexwilson/.hermes/plugins/sieve/scripts/watch.py</string>
+    <string>__HERMES_HOME__/hermes-agent/venv/bin/python</string>
+    <string>__HERMES_HOME__/plugins/sieve/scripts/watch.py</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HERMES_HOME</key>
+    <string>__HERMES_HOME__</string>
+  </dict>
   <!-- Poll while the Mac is awake. -->
   <key>StartInterval</key>
   <integer>120</integer>
@@ -26,8 +39,8 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>/Users/alexwilson/.hermes/logs/sieve-watch.log</string>
+  <string>__HERMES_HOME__/logs/sieve-watch.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/alexwilson/.hermes/logs/sieve-watch.err</string>
+  <string>__HERMES_HOME__/logs/sieve-watch.err</string>
 </dict>
 </plist>

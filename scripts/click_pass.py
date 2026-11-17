@@ -48,6 +48,14 @@ def main(policy_path=None):
     conn = sqlite3.connect(str(db_path))
     queue.init_schema(conn)
     queue.db = lambda: conn  # route every call at the temp store
+    # Policy files are confined to the plugin data dir. Point that at the temp
+    # store too, or the click pass would overwrite the live profile's policy.
+    # plugin_api loads its own copy of __init__.py, so patch both instances.
+    def _temp_policy_dir():
+        return Path(tmpdir) / "plugin-data" / "sieve"
+
+    plugin._policy_dir = _temp_policy_dir
+    api._plugin._policy_dir = _temp_policy_dir
 
     if policy_path and Path(policy_path).exists():
         data = json.loads(Path(policy_path).read_text())
@@ -145,18 +153,21 @@ def main(policy_path=None):
     check("/sieve budget", bool(queue.kv_get(conn, "budget_per_hour") or True) and "budget" in cmd("budget 6").lower())
     check("/sieve promote", "promotion" in cmd("promote 15").lower())
 
-    export_path = str(Path(tmpdir) / "policy.json")
-    exp = cmd(f"export {export_path}")
+    export_path = Path(tmpdir) / "plugin-data" / "sieve" / "policy.json"
+    exp = cmd("export policy.json")
     check("/sieve export writes a file",
-          Path(export_path).exists() and "exported" in exp, exp)
-    exported = json.loads(Path(export_path).read_text())
+          export_path.exists() and "exported" in exp, exp)
+    exported = json.loads(export_path.read_text())
     check("exported policy is versioned and portable",
           exported["sieve_policy_version"] == 1
           and "paused_until" not in exported["kv"]
           and "escalation_degraded" not in exported["kv"])
 
-    imp = cmd(f"import {export_path} replace")
+    imp = cmd("import policy.json replace")
     check("/sieve import replace", "replaced" in imp, imp)
+    outside = cmd(f"export {Path(tmpdir) / 'escape.json'}")
+    check("/sieve export refuses a path outside the data dir",
+          "refused" in outside and not (Path(tmpdir) / "escape.json").exists(), outside)
 
     check("/sieve test degrades instead of erroring",
           "push-gate blocked" in cmd("test T5") or "SIEVE error" in cmd("test T5") is False,

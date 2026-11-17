@@ -29,9 +29,13 @@ def test_setup_walk_and_apply(monkeypatch, tmp_path):
     plugin._cmd("setup T5")
     plugin._cmd("setup no")
     plugin._cmd("setup discord:#ops")
+    chain = plugin._cmd("setup telegram,photon:any;-;+15555550100")
+    assert "[daytime]" in chain
     done = plugin._cmd("setup T2")
     assert "Setup is complete" in done
     assert queue.kv_get(conn, "target") == "discord:#ops"
+    assert queue.kv_get(conn, "target:T4") == "telegram,photon:any;-;+15555550100"
+    assert queue.kv_get(conn, "target:T5") == "telegram,photon:any;-;+15555550100"
     assert queue.kv_get(conn, "phone_arm") == "no"
     wins = queue.windows(conn)
     assert wins and wins[0][4] == 5
@@ -52,6 +56,29 @@ def test_setup_apply_is_one_shot(monkeypatch, tmp_path):
     assert "meeting" in cell
     grid = plugin._cmd("matrix")
     assert "needs_human: T5" in grid
+
+
+def test_export_and_import_confined_to_profile_data_dir(monkeypatch, tmp_path):
+    conn = _fresh(monkeypatch, tmp_path)
+    data_dir = tmp_path / "plugin-data" / "sieve"
+    monkeypatch.setattr(plugin, "_policy_dir", lambda: data_dir)
+    queue.add_rule(conn, "needs_human", {}, 4, label="gate", source="user")
+
+    out = plugin._cmd("export")
+    assert "policy exported" in out
+    assert (data_dir / "policy.json").exists()
+
+    refused = plugin._cmd("export ../outside.json")
+    assert "refused" in refused
+    assert not (tmp_path / "plugin-data" / "outside.json").exists()
+    assert plugin._cmd("import ../outside.json").startswith("import refused")
+
+    other = sqlite3.connect(str(tmp_path / "other.db"))
+    queue.init_schema(other)
+    monkeypatch.setattr(queue, "db", lambda: other)
+    merged = plugin._cmd("import")
+    assert "merged" in merged
+    assert queue.rules_for(other, "needs_human")
 
 
 def test_no_phone_does_not_fire_alarm(monkeypatch, tmp_path):
